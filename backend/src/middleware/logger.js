@@ -1,16 +1,27 @@
+// @ts-check
+import pino from 'pino';
+
+export const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+
 /**
- * Simple request logger middleware.
- * Logs method, path, status code and response time.
+ * Logs each request as a structured JSON line including method, path,
+ * status code, duration ms, and request ID.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
  */
-export default function logger(req, res, next) {
+export default function requestLogger(req, res, next) {
   const start = Date.now();
 
   res.on('finish', () => {
-    const duration = Date.now() - start;
-    const { method, originalUrl } = req;
-    const { statusCode } = res;
-
-    console.log(`${method} ${originalUrl} ${statusCode} - ${duration}ms`);
+    log.info({
+      requestId: res.locals.requestId,
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration_ms: Date.now() - start,
+    });
   });
 
   next();

@@ -47,6 +47,7 @@ export function createRateLimiter({
       res.setHeader('Retry-After', String(retryAfterSeconds));
       return res.status(429).json({
         error: 'Rate limit exceeded',
+        code: 'RATE_LIMIT_EXCEEDED',
         keying: 'per API key when present, otherwise per IP address',
         limit: maxRequests,
         windowMs,

@@ -39,5 +39,6 @@ export function resolveStellarNetworkConfig({
     networkPassphrase: networkPassphrase || preset.networkPassphrase,
     sorobanRpcUrl: sorobanRpcUrl || preset.sorobanRpcUrl,
     horizonUrl: horizonUrl || preset.horizonUrl,
+    explorerUrl: preset.explorerUrl,
   };
 }

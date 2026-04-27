@@ -80,7 +80,9 @@ test('GET /api/v1/campaigns/:id returns 404 for a missing campaign', async () =>
   try {
     const response = await fetch(`${baseUrl}/api/v1/campaigns/999`);
     assert.equal(response.status, 404);
-    assert.deepEqual(await response.json(), { error: 'Campaign not found' });
+    const body = await response.json();
+    assert.equal(body.error, 'Campaign not found');
+    assert.equal(body.code, 'CAMPAIGN_NOT_FOUND');
   } finally {
     await stopTestServer(server);
   }
@@ -119,7 +121,9 @@ test('DELETE /api/v1/campaigns/:id removes a campaign and returns 404 when missi
       method: 'DELETE',
     });
     assert.equal(response.status, 404);
-    assert.deepEqual(await response.json(), { error: 'Campaign not found' });
+    const deleteNotFoundBody = await response.json();
+    assert.equal(deleteNotFoundBody.error, 'Campaign not found');
+    assert.equal(deleteNotFoundBody.code, 'CAMPAIGN_NOT_FOUND');
   } finally {
     await stopTestServer(server);
   }
@@ -145,13 +149,13 @@ test('rate limiting applies to API routes', async () => {
     const secondResponse = await fetch(`${baseUrl}/api/v1/campaigns`);
     assert.equal(secondResponse.status, 429);
     assert.equal(secondResponse.headers.get('retry-after'), '60');
-    assert.deepEqual(await secondResponse.json(), {
-      error: 'Rate limit exceeded',
-      keying: 'per API key when present, otherwise per IP address',
-      limit: 1,
-      windowMs: 60_000,
-      retryAfterSeconds: 60,
-    });
+    const rlBody = await secondResponse.json();
+    assert.equal(rlBody.error, 'Rate limit exceeded');
+    assert.equal(rlBody.code, 'RATE_LIMIT_EXCEEDED');
+    assert.equal(rlBody.keying, 'per API key when present, otherwise per IP address');
+    assert.equal(rlBody.limit, 1);
+    assert.equal(rlBody.windowMs, 60_000);
+    assert.equal(rlBody.retryAfterSeconds, 60);
   } finally {
     await stopTestServer(server);
   }
@@ -439,7 +443,9 @@ test('PUT /api/v1/campaigns/:id updates an existing campaign and returns 404 whe
       body: JSON.stringify(updateData),
     });
     assert.equal(missingResponse.status, 404);
-    assert.deepEqual(await missingResponse.json(), { error: 'Campaign not found' });
+    const missingBody = await missingResponse.json();
+    assert.equal(missingBody.error, 'Campaign not found');
+    assert.equal(missingBody.code, 'CAMPAIGN_NOT_FOUND');
   } finally {
     await stopTestServer(server);
   }
@@ -637,7 +643,9 @@ test('GET /api/v1/campaigns/by-slug/:slug returns 404 for missing slug', async (
   try {
     const response = await fetch(`${baseUrl}/api/v1/campaigns/by-slug/nonexistent-slug`);
     assert.equal(response.status, 404);
-    assert.deepEqual(await response.json(), { error: 'Campaign not found' });
+    const slugBody = await response.json();
+    assert.equal(slugBody.error, 'Campaign not found');
+    assert.equal(slugBody.code, 'CAMPAIGN_NOT_FOUND');
   } finally {
     await stopTestServer(server);
   }

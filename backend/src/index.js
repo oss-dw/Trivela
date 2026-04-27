@@ -8,14 +8,22 @@ import express from 'express';
 import { pathToFileURL } from 'node:url';
 import createApiKeyAuth from './middleware/apiKeyAuth.js';
 import { createRateLimiter } from './middleware/rateLimit.js';
-import logger from './middleware/logger.js';
+import requestLogger, { log } from './middleware/logger.js';
+import requestId from './middleware/requestId.js';
 import securityHeaders from './middleware/securityHeaders.js';
+import errorHandler from './middleware/errorHandler.js';
 import { paginateItems } from './pagination.js';
 import { checkSorobanRpcHealth } from './sorobanRpc.js';
 import { resolveStellarNetworkConfig } from './config/stellarNetwork.js';
 import { validateBackendEnv } from './config/envValidation.js';
 import { createDal } from './dal/index.js';
 import { createJobRunner } from './jobs/jobRunner.js';
+import {
+  campaignCreateSchema,
+  campaignUpdateSchema,
+  cursorBodySchema,
+  formatZodErrors,
+} from './schemas.js';
 
 const DEFAULT_PORT = 3001;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -27,11 +35,17 @@ const LEGACY_API_PREFIX = '/api';
 const API_V1_PREFIX = '/api/v1';
 const CONTRACT_ID_PATTERN = /^C[A-Z2-7]{55}$/;
 
+/**
+ * @param {string | number | undefined} value
+ * @param {number} fallback
+ * @returns {number}
+ */
 function normalizePositiveInteger(value, fallback) {
-  const parsed = Number.parseInt(value, 10);
+  const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** @returns {{ name: string, description: string, active: boolean, rewardPerAction: number, createdAt: string }[]} */
 function defaultSeed() {
   return [
     {
@@ -44,6 +58,7 @@ function defaultSeed() {
   ];
 }
 
+/** @param {string | undefined} value @returns {string[]} */
 function parseAllowedOrigins(value) {
   if (!value) {
     return [];
@@ -55,9 +70,10 @@ function parseAllowedOrigins(value) {
     .filter(Boolean);
 }
 
+/** @param {string[]} allowedOrigins @returns {import('cors').CorsOptions} */
 function createCorsOptions(allowedOrigins) {
   const corsOptions = {
-    maxAge: 86400, // 24 hours preflight cache
+    maxAge: 86400,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-API-Key'],
@@ -68,18 +84,19 @@ function createCorsOptions(allowedOrigins) {
   }
 
   return {
-    origin(origin, callback) {
+    origin(/** @type {string | undefined} */ origin, /** @type {(err: Error | null, allow?: boolean) => void} */ callback) {
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
         return;
       }
 
-      callback(new Error('Not allowed by CORS'));
+      callback(null, false);
     },
     ...corsOptions,
   };
 }
 
+/** @param {Record<string, unknown>} options @param {string} envKey @returns {string} */
 function readOptionalConfigValue(options, envKey) {
   const fromOptions = options[envKey];
   if (typeof fromOptions === 'string' && fromOptions.trim().length > 0) {
@@ -90,88 +107,29 @@ function readOptionalConfigValue(options, envKey) {
   return typeof fromEnv === 'string' ? fromEnv : '';
 }
 
+/** @param {unknown} value @param {string} label @returns {string} */
 function validateContractId(value, label) {
   if (!value) {
     return '';
   }
-  const normalized = value.trim();
+  const normalized = String(value).trim();
   if (!CONTRACT_ID_PATTERN.test(normalized)) {
     throw new Error(`${label} must be a valid Stellar contract ID`);
   }
   return normalized;
 }
 
-function validateCampaignPayload(payload, { partial = false } = {}) {
-  const errors = [];
-
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return ['request body must be a JSON object'];
-  }
-
-  if (!partial || Object.hasOwn(payload, 'name')) {
-    if (typeof payload.name !== 'string' || payload.name.trim().length === 0) {
-      errors.push('name is required and must be a non-empty string');
-    }
-  }
-
-  if (Object.hasOwn(payload, 'slug') && typeof payload.slug !== 'string') {
-    errors.push('slug must be a string when provided');
-  }
-
-  if (!partial || Object.hasOwn(payload, 'rewardPerAction')) {
-    if (
-      typeof payload.rewardPerAction !== 'number' ||
-      !Number.isFinite(payload.rewardPerAction) ||
-      payload.rewardPerAction < 0
-    ) {
-      errors.push('rewardPerAction is required and must be a non-negative number');
-    }
-  }
-
-  if (Object.hasOwn(payload, 'description') && typeof payload.description !== 'string') {
-    errors.push('description must be a string when provided');
-  }
-
-  if (Object.hasOwn(payload, 'active') && typeof payload.active !== 'boolean') {
-    errors.push('active must be a boolean when provided');
-  }
-
-  if (Object.hasOwn(payload, 'featured') && typeof payload.featured !== 'boolean') {
-    errors.push('featured must be a boolean when provided');
-  }
-
-  if (Object.hasOwn(payload, 'hidden') && typeof payload.hidden !== 'boolean') {
-    errors.push('hidden must be a boolean when provided');
-  }
-
-  if (Object.hasOwn(payload, 'hiddenReason') && payload.hiddenReason !== null && typeof payload.hiddenReason !== 'string') {
-    errors.push('hiddenReason must be a string or null when provided');
-  }
-
-  for (const field of ['startDate', 'endDate']) {
-    if (Object.hasOwn(payload, field)) {
-      const val = payload[field];
-      if (val !== null && (typeof val !== 'string' || Number.isNaN(Date.parse(val)))) {
-        errors.push(`${field} must be an ISO 8601 date string or null when provided`);
-      }
-    }
-  }
-
-  return errors;
-}
-
-
+/** @param {Record<string, unknown>} options @returns {import('express').Application} */
 export function createApp(options = {}) {
-  const apiKey = options.apiKey ?? process.env.TRIVELA_API_KEY ?? '';
   const jsonBodyLimit =
-    options.jsonBodyLimit ?? process.env.JSON_BODY_LIMIT ?? DEFAULT_JSON_BODY_LIMIT;
+    /** @type {string} */ (options.jsonBodyLimit) ?? process.env.JSON_BODY_LIMIT ?? DEFAULT_JSON_BODY_LIMIT;
   const corsAllowedOrigins =
-    options.corsAllowedOrigins ?? process.env.CORS_ALLOWED_ORIGINS ?? process.env.CORS_ORIGIN;
+    /** @type {string | undefined} */ (options.corsAllowedOrigins) ?? process.env.CORS_ALLOWED_ORIGINS ?? process.env.CORS_ORIGIN;
   const stellarConfig = resolveStellarNetworkConfig({
-    network: options.stellarNetwork ?? process.env.STELLAR_NETWORK,
-    sorobanRpcUrl: options.sorobanRpcUrl ?? process.env.SOROBAN_RPC_URL,
-    horizonUrl: options.horizonUrl ?? process.env.HORIZON_URL,
-    networkPassphrase: options.networkPassphrase ?? process.env.STELLAR_NETWORK_PASSPHRASE,
+    network: /** @type {string} */ (options.stellarNetwork) ?? process.env.STELLAR_NETWORK,
+    sorobanRpcUrl: /** @type {string} */ (options.sorobanRpcUrl) ?? process.env.SOROBAN_RPC_URL,
+    horizonUrl: /** @type {string} */ (options.horizonUrl) ?? process.env.HORIZON_URL,
+    networkPassphrase: /** @type {string} */ (options.networkPassphrase) ?? process.env.STELLAR_NETWORK_PASSPHRASE,
   });
   const rewardsContractId = validateContractId(
     readOptionalConfigValue(options, 'REWARDS_CONTRACT_ID'),
@@ -181,10 +139,9 @@ export function createApp(options = {}) {
     readOptionalConfigValue(options, 'CAMPAIGN_CONTRACT_ID'),
     'CAMPAIGN_CONTRACT_ID',
   );
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const fetchImpl = /** @type {typeof fetch} */ (options.fetchImpl) ?? globalThis.fetch;
   const allowedOrigins = parseAllowedOrigins(corsAllowedOrigins);
 
-  // Validate CORS configuration in production
   const isProduction = process.env.NODE_ENV === 'production';
   if (isProduction && (allowedOrigins.length === 0 || allowedOrigins.includes('*'))) {
     throw new Error(
@@ -193,18 +150,16 @@ export function createApp(options = {}) {
   }
 
   const rateLimitWindowMs = normalizePositiveInteger(
-    options.rateLimit?.windowMs ?? process.env.RATE_LIMIT_WINDOW_MS,
+    /** @type {any} */ (options.rateLimit)?.windowMs ?? process.env.RATE_LIMIT_WINDOW_MS,
     DEFAULT_RATE_LIMIT_WINDOW_MS,
   );
   const rateLimitMaxRequests = normalizePositiveInteger(
-    options.rateLimit?.maxRequests ?? process.env.RATE_LIMIT_MAX_REQUESTS,
+    /** @type {any} */ (options.rateLimit)?.maxRequests ?? process.env.RATE_LIMIT_MAX_REQUESTS,
     DEFAULT_RATE_LIMIT_MAX_REQUESTS,
   );
 
-  // When an explicit campaigns seed is provided (legacy test path), use it;
-  // otherwise fall back to the default "Welcome Campaign" row.
-  const seed = options.campaigns ?? defaultSeed();
-  const dbPath = options.dbPath ?? process.env.DB_PATH ?? ':memory:';
+  const seed = /** @type {any[]} */ (options.campaigns) ?? defaultSeed();
+  const dbPath = /** @type {string} */ (options.dbPath) ?? process.env.DB_PATH ?? ':memory:';
   const dal = createDal({
     dbPath,
     campaigns: seed,
@@ -214,22 +169,22 @@ export function createApp(options = {}) {
   const campaignRepository = dal.campaigns;
   const auditLogRepository = dal.auditLogs;
   const shortCacheTtlMs = normalizePositiveInteger(
-    options.shortCacheTtlMs ?? process.env.SHORT_CACHE_TTL_MS,
+    /** @type {any} */ (options.shortCacheTtlMs) ?? process.env.SHORT_CACHE_TTL_MS,
     DEFAULT_SHORT_CACHE_TTL_MS,
   );
   const rpcPollIntervalMs = normalizePositiveInteger(
-    options.rpcPollIntervalMs ?? process.env.RPC_HEALTH_POLL_INTERVAL_MS,
+    /** @type {any} */ (options.rpcPollIntervalMs) ?? process.env.RPC_HEALTH_POLL_INTERVAL_MS,
     DEFAULT_RPC_POLL_INTERVAL_MS,
   );
   const shortCache = new Map();
   const indexerCursorState = {
-    cursor: options.initialIndexerCursor ?? process.env.INDEXER_EVENT_CURSOR ?? null,
+    cursor: /** @type {string | null} */ (options.initialIndexerCursor) ?? process.env.INDEXER_EVENT_CURSOR ?? null,
     updatedAt: new Date().toISOString(),
-    source: options.initialIndexerCursor ?? process.env.INDEXER_EVENT_CURSOR ? 'env' : 'runtime',
+    source: (options.initialIndexerCursor ?? process.env.INDEXER_EVENT_CURSOR) ? 'env' : 'runtime',
   };
   const rpcHealthCache = {
-    updatedAt: null,
-    payload: null,
+    updatedAt: /** @type {string | null} */ (null),
+    payload: /** @type {unknown} */ (null),
   };
 
   const app = express();
@@ -238,24 +193,28 @@ export function createApp(options = {}) {
     requestErrors: 0,
     routeHits: new Map(),
   };
-  const requireApiKey = createApiKeyAuth({ apiKeys });
+
+  const requireApiKey = createApiKeyAuth({
+    apiKeys: /** @type {string} */ (options.apiKeys) ?? /** @type {string} */ (options.apiKey) ?? process.env.TRIVELA_API_KEYS ?? process.env.TRIVELA_API_KEY ?? '',
+  });
   const rateLimiter = createRateLimiter({
     windowMs: rateLimitWindowMs,
     maxRequests: rateLimitMaxRequests,
-    timeProvider: options.rateLimit?.timeProvider,
+    timeProvider: /** @type {any} */ (options.rateLimit)?.timeProvider,
   });
 
+  app.use(requestId);
   app.use(cors(createCorsOptions(allowedOrigins)));
   app.use(securityHeaders);
-  app.use(logger);
+  app.use(requestLogger);
   app.use(express.json({ limit: jsonBodyLimit }));
-  app.use((err, _req, res, next) => {
+  app.use((/** @type {any} */ err, /** @type {import('express').Request} */ _req, /** @type {import('express').Response} */ res, /** @type {import('express').NextFunction} */ next) => {
     if (err?.type === 'entity.too.large') {
-      return res.status(413).json({ error: 'Request body too large' });
+      return res.status(413).json({ error: 'Request body too large', code: 'PAYLOAD_TOO_LARGE' });
     }
     return next(err);
   });
-  app.use((req, res, next) => {
+  app.use((/** @type {import('express').Request} */ req, /** @type {import('express').Response} */ res, /** @type {import('express').NextFunction} */ next) => {
     metrics.requestTotal += 1;
     res.on('finish', () => {
       const routeKey = `${req.method} ${req.path}`;
@@ -270,13 +229,14 @@ export function createApp(options = {}) {
   const SCHEMA_VERSION_HEADER = 'X-Trivela-Schema-Version';
   const SCHEMA_VERSION = '1';
 
-  app.use((req, res, next) => {
+  app.use((/** @type {import('express').Request} */ req, /** @type {import('express').Response} */ res, /** @type {import('express').NextFunction} */ next) => {
     res.setHeader(SCHEMA_VERSION_HEADER, SCHEMA_VERSION);
 
     const requestedVersion = req.get(SCHEMA_VERSION_HEADER);
     if (requestedVersion && requestedVersion !== SCHEMA_VERSION) {
       return res.status(400).json({
         error: 'Unsupported API schema version',
+        code: 'UNSUPPORTED_SCHEMA_VERSION',
         supported: SCHEMA_VERSION,
         requested: requestedVersion,
       });
@@ -296,7 +256,7 @@ export function createApp(options = {}) {
         rpcHealthCache.updatedAt = new Date().toISOString();
       },
     },
-    logger: console,
+    logger: log,
   });
 
   if (!options.disableJobs && rpcPollIntervalMs > 0) {
@@ -313,13 +273,14 @@ export function createApp(options = {}) {
       }));
 
     return {
-      status: rpc.status === 'ok' ? 'ok' : 'degraded',
+      status: /** @type {any} */ (rpc).status === 'ok' ? 'ok' : 'degraded',
       service: 'trivela-api',
       timestamp: new Date().toISOString(),
       rpc,
     };
   }
 
+  /** @param {import('express').Request} req @returns {string} */
   function formatAuditActor(req) {
     const apiKey = req?.auth?.type === 'apiKey' ? req.auth.apiKey : '';
     if (!apiKey) return 'anonymous';
@@ -328,6 +289,10 @@ export function createApp(options = {}) {
     return `apiKey:${key.slice(0, 4)}...${key.slice(-4)}`;
   }
 
+  /**
+   * @param {import('express').Request} req
+   * @param {{ action: string, entity: string, entityId: string, diff: unknown }} entry
+   */
   function recordAuditEntry(req, { action, entity, entityId, diff }) {
     try {
       auditLogRepository.create({
@@ -339,7 +304,7 @@ export function createApp(options = {}) {
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
-      console.warn('Failed to record audit entry:', error);
+      log.warn({ err: error }, 'Failed to record audit entry');
     }
   }
 
@@ -353,7 +318,7 @@ export function createApp(options = {}) {
       rpcUrl: stellarConfig.sorobanRpcUrl,
       fetchImpl,
     });
-    res.status(rpc.status === 'ok' ? 200 : 503).json(rpc);
+    res.status(/** @type {any} */ (rpc).status === 'ok' ? 200 : 503).json(rpc);
   });
 
   app.get('/metrics', (_req, res) => {
@@ -386,6 +351,7 @@ export function createApp(options = {}) {
     res.send(`${payload}\n`);
   });
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function apiInfo(req, res) {
     const usingLegacyPrefix =
       req.path.startsWith(LEGACY_API_PREFIX) && !req.path.startsWith(API_V1_PREFIX);
@@ -436,6 +402,7 @@ export function createApp(options = {}) {
     });
   }
 
+  /** @param {import('express').Request} _req @param {import('express').Response} res */
   function getPublicConfig(_req, res) {
     res.json({
       stellar: {
@@ -448,6 +415,7 @@ export function createApp(options = {}) {
     });
   }
 
+  /** @param {import('express').Request} _req @param {import('express').Response} res */
   function getExplorerLinks(_req, res) {
     res.json({
       network: stellarConfig.network,
@@ -455,6 +423,7 @@ export function createApp(options = {}) {
     });
   }
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function listCampaigns(req, res) {
     const cacheKey = `campaigns:${req.originalUrl}`;
     const cached = shortCache.get(cacheKey);
@@ -476,54 +445,49 @@ export function createApp(options = {}) {
     return res.set('x-cache', 'MISS').json(payload);
   }
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function getCampaignById(req, res) {
     const campaign = campaignRepository.getById(req.params.id);
     if (!campaign) {
-      return res.status(404).json({ error: 'Campaign not found' });
+      return res.status(404).json({ error: 'Campaign not found', code: 'CAMPAIGN_NOT_FOUND' });
     }
     return res.json(campaign);
   }
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function getCampaignBySlug(req, res) {
     const campaign = campaignRepository.getBySlug(req.params.slug);
     if (!campaign) {
-      return res.status(404).json({ error: 'Campaign not found' });
+      return res.status(404).json({ error: 'Campaign not found', code: 'CAMPAIGN_NOT_FOUND' });
     }
     return res.json(campaign);
   }
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function createCampaign(req, res) {
-    const errors = validateCampaignPayload(req.body, { partial: false });
-    if (errors.length > 0) {
+    const result = campaignCreateSchema.safeParse(req.body);
+    if (!result.success) {
       return res.status(400).json({
         error: 'Invalid campaign payload',
-        details: errors,
+        code: 'VALIDATION_ERROR',
+        details: formatZodErrors(result.error),
       });
     }
 
-<<<<<<< feat/campaign-indexes-featured-hidden-explorer
-    const { name, slug, description, rewardPerAction, startDate, endDate, featured } = req.body;
-=======
-    const { name, slug, description, featured, rewardPerAction, startDate, endDate } = req.body;
->>>>>>> main
+    const { name, slug, description, rewardPerAction, startDate, endDate, featured, hidden, hiddenReason, active } = result.data;
     try {
       const campaign = campaignRepository.create({
         name,
         slug: slug || undefined,
         description: description || '',
+        active: active ?? true,
         featured: featured ?? false,
+        hidden: hidden ?? false,
+        hiddenReason: hiddenReason ?? null,
         rewardPerAction: rewardPerAction ?? 0,
         startDate: startDate ?? null,
         endDate: endDate ?? null,
-        featured: featured ?? false,
       });
-      recordAuditEntry(req, {
-        action: 'create',
-        entity: 'campaign',
-        entityId: campaign.id,
-        diff: { after: campaign },
-      });
-
       recordAuditEntry(req, {
         action: 'create',
         entity: 'campaign',
@@ -534,9 +498,10 @@ export function createApp(options = {}) {
       shortCache.clear();
       return res.status(201).json(campaign);
     } catch (error) {
-      if (error.message.includes('UNIQUE constraint failed')) {
+      if (/** @type {any} */ (error).message?.includes('UNIQUE constraint failed')) {
         return res.status(409).json({
           error: 'Slug already exists',
+          code: 'SLUG_CONFLICT',
           details: ['A campaign with this slug already exists'],
         });
       }
@@ -544,20 +509,19 @@ export function createApp(options = {}) {
     }
   }
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function updateCampaign(req, res) {
-    const errors = validateCampaignPayload(req.body, { partial: true });
-    if (errors.length > 0) {
+    const result = campaignUpdateSchema.safeParse(req.body);
+    if (!result.success) {
       return res.status(400).json({
         error: 'Invalid campaign payload',
-        details: errors,
+        code: 'VALIDATION_ERROR',
+        details: formatZodErrors(result.error),
       });
     }
 
-<<<<<<< feat/campaign-indexes-featured-hidden-explorer
-    const { name, description, active, rewardPerAction, startDate, endDate, featured, hidden, hiddenReason } = req.body;
-=======
-    const { name, description, active, featured, rewardPerAction, startDate, endDate } = req.body;
->>>>>>> main
+    const { name, description, active, rewardPerAction, startDate, endDate, featured, hidden, hiddenReason } = result.data;
+    /** @type {Record<string, unknown>} */
     const updateFields = {};
     if (name !== undefined) updateFields.name = name;
     if (description !== undefined) updateFields.description = description;
@@ -566,18 +530,17 @@ export function createApp(options = {}) {
     if (rewardPerAction !== undefined) updateFields.rewardPerAction = rewardPerAction;
     if (startDate !== undefined) updateFields.startDate = startDate;
     if (endDate !== undefined) updateFields.endDate = endDate;
-    if (featured !== undefined) updateFields.featured = featured;
     if (hidden !== undefined) updateFields.hidden = hidden;
     if (hiddenReason !== undefined) updateFields.hiddenReason = hiddenReason;
 
     const before = campaignRepository.getById(req.params.id);
     if (!before) {
-      return res.status(404).json({ error: 'Campaign not found' });
+      return res.status(404).json({ error: 'Campaign not found', code: 'CAMPAIGN_NOT_FOUND' });
     }
 
     const campaign = campaignRepository.update(req.params.id, updateFields);
     if (!campaign) {
-      return res.status(404).json({ error: 'Campaign not found' });
+      return res.status(404).json({ error: 'Campaign not found', code: 'CAMPAIGN_NOT_FOUND' });
     }
     const changes = Object.keys(updateFields);
     recordAuditEntry(req, {
@@ -590,11 +553,12 @@ export function createApp(options = {}) {
     return res.json(campaign);
   }
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function deleteCampaign(req, res) {
     const before = campaignRepository.getById(req.params.id);
     const deleted = campaignRepository.delete(req.params.id);
     if (!deleted) {
-      return res.status(404).json({ error: 'Campaign not found' });
+      return res.status(404).json({ error: 'Campaign not found', code: 'CAMPAIGN_NOT_FOUND' });
     }
     recordAuditEntry(req, {
       action: 'delete',
@@ -606,6 +570,7 @@ export function createApp(options = {}) {
     return res.status(204).end();
   }
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function listAuditLogs(req, res) {
     const entity = typeof req.query.entity === 'string' ? req.query.entity.trim() : '';
     const entityId = typeof req.query.entityId === 'string' ? req.query.entityId.trim() : '';
@@ -618,6 +583,7 @@ export function createApp(options = {}) {
     return res.json(paginateItems(items, req.query));
   }
 
+  /** @param {import('express').Request} _req @param {import('express').Response} res */
   function getIndexerCursorState(_req, res) {
     return res.json({
       cursor: indexerCursorState.cursor,
@@ -626,12 +592,17 @@ export function createApp(options = {}) {
     });
   }
 
+  /** @param {import('express').Request} req @param {import('express').Response} res */
   function setIndexerCursorState(req, res) {
-    const { cursor } = req.body ?? {};
-    if (typeof cursor !== 'string' || cursor.trim().length === 0) {
-      return res.status(400).json({ error: 'cursor is required and must be a non-empty string' });
+    const result = cursorBodySchema.safeParse(req.body ?? {});
+    if (!result.success) {
+      return res.status(400).json({
+        error: formatZodErrors(result.error)[0] ?? 'Invalid request body',
+        code: 'VALIDATION_ERROR',
+      });
     }
-    indexerCursorState.cursor = cursor.trim();
+    const { cursor } = result.data;
+    indexerCursorState.cursor = cursor;
     indexerCursorState.updatedAt = new Date().toISOString();
     indexerCursorState.source = 'api';
     return res.status(200).json({
@@ -641,6 +612,7 @@ export function createApp(options = {}) {
     });
   }
 
+  /** @param {string} prefix */
   function registerApiRoutes(prefix) {
     app.get(prefix, rateLimiter, apiInfo);
     app.get(`${prefix}/config`, rateLimiter, getPublicConfig);
@@ -659,9 +631,13 @@ export function createApp(options = {}) {
   registerApiRoutes(API_V1_PREFIX);
   registerApiRoutes(LEGACY_API_PREFIX);
 
+  // Central error handler — must be registered after all routes
+  app.use(errorHandler);
+
   return app;
 }
 
+/** @param {Record<string, unknown>} options @returns {import('http').Server} */
 export function startServer(options = {}) {
   if (!options.skipEnvValidation) {
     validateBackendEnv(process.env);
@@ -671,7 +647,7 @@ export function startServer(options = {}) {
   const port = options.port ?? process.env.PORT ?? DEFAULT_PORT;
 
   return app.listen(port, () => {
-    console.log(`Trivela API running at http://localhost:${port}`);
+    log.info({ port }, 'Trivela API running');
   });
 }
 

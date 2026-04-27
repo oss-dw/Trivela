@@ -60,7 +60,7 @@ export default function createApiKeyAuth({
 
     const provided = readProvidedKey(req);
 
-    if (provided === apiKey) {
+    if (allowedKeySet.has(provided)) {
       req.auth = {
         type: 'apiKey',
         apiKey: String(provided),
@@ -68,6 +68,6 @@ export default function createApiKeyAuth({
       return next();
     }
 
-    return res.status(401).json({ error: 'Unauthorized – valid API key required.' });
+    return res.status(401).json({ error: 'Unauthorized – valid API key required.', code: 'UNAUTHORIZED' });
   };
 }
