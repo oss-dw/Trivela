@@ -15,6 +15,7 @@ import securityHeaders from './middleware/securityHeaders.js';
 import errorHandler from './middleware/errorHandler.js';
 import { paginateItems } from './pagination.js';
 import { checkSorobanRpcHealth } from './sorobanRpc.js';
+import { createRpcPool } from './rpcPool.js';
 import { resolveStellarNetworkConfig } from './config/stellarNetwork.js';
 import { validateBackendEnv } from './config/envValidation.js';
 import { createDal } from './dal/index.js';
@@ -146,6 +147,11 @@ export async function createApp(options = {}) {
     'CAMPAIGN_CONTRACT_ID',
   );
   const fetchImpl = /** @type {typeof fetch} */ (options.fetchImpl) ?? globalThis.fetch;
+  const rpcUrlsRaw = /** @type {string | undefined} */ (options.sorobanRpcUrls) ?? process.env.SOROBAN_RPC_URLS;
+  const rpcUrls = rpcUrlsRaw
+    ? String(rpcUrlsRaw).split(',').map(u => u.trim()).filter(Boolean)
+    : [stellarConfig.sorobanRpcUrl];
+  const rpcPool = createRpcPool(rpcUrls);
   const allowedOrigins = parseAllowedOrigins(corsAllowedOriginsRaw);
 
   if (isProduction && allowedOrigins.includes('*')) {
@@ -280,10 +286,16 @@ export async function createApp(options = {}) {
   const jobRunner = createJobRunner({
     handlers: {
       async rpc_health_poll() {
-        const rpc = await checkSorobanRpcHealth({
-          rpcUrl: stellarConfig.sorobanRpcUrl,
-          fetchImpl,
-        });
+        for (const url of rpcPool.getUrls()) {
+          const result = await checkSorobanRpcHealth({ rpcUrl: url, fetchImpl });
+          if (/** @type {any} */ (result).status === 'ok') {
+            rpcPool.markHealthy(url);
+          } else {
+            rpcPool.markUnhealthy(url);
+          }
+        }
+        const rpcUrl = rpcPool.getHealthyRpcUrl();
+        const rpc = await checkSorobanRpcHealth({ rpcUrl, fetchImpl });
         rpcHealthCache.payload = rpc;
         rpcHealthCache.updatedAt = new Date().toISOString();
       },
@@ -307,18 +319,17 @@ export async function createApp(options = {}) {
   }
 
   async function buildHealthPayload() {
+    const rpcUrl = rpcPool.getHealthyRpcUrl();
     const rpc =
       rpcHealthCache.payload ??
-      (await checkSorobanRpcHealth({
-        rpcUrl: stellarConfig.sorobanRpcUrl,
-        fetchImpl,
-      }));
+      (await checkSorobanRpcHealth({ rpcUrl, fetchImpl }));
 
     return {
       status: /** @type {any} */ (rpc).status === 'ok' ? 'ok' : 'degraded',
       service: 'trivela-api',
       timestamp: new Date().toISOString(),
       rpc,
+      rpcPool: rpcPool.getStatus(),
     };
   }
 
@@ -356,11 +367,15 @@ export async function createApp(options = {}) {
   });
 
   app.get('/health/rpc', async (_req, res) => {
-    const rpc = await checkSorobanRpcHealth({
-      rpcUrl: stellarConfig.sorobanRpcUrl,
-      fetchImpl,
+    const rpcUrl = rpcPool.getHealthyRpcUrl();
+    const rpc = await checkSorobanRpcHealth({ rpcUrl, fetchImpl });
+    if (/** @type {any} */ (rpc).status !== 'ok') {
+      rpcPool.markUnhealthy(rpcUrl);
+    }
+    res.status(/** @type {any} */ (rpc).status === 'ok' ? 200 : 503).json({
+      ...rpc,
+      rpcPool: rpcPool.getStatus(),
     });
-    res.status(/** @type {any} */ (rpc).status === 'ok' ? 200 : 503).json(rpc);
   });
 
   app.get('/metrics', (_req, res) => {
