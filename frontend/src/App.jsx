@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Landing from './Landing';
 import CampaignDetail from './CampaignDetail';
+import CampaignLeaderboard from './CampaignLeaderboard';
 import AdminCampaigns from './AdminCampaigns';
 import About from './About';
 import { applyTheme, getPreferredTheme, THEME_STORAGE_KEY } from './theme';
@@ -161,6 +162,26 @@ export default function App() {
         path="/campaign/:id"
         element={
           <CampaignDetail
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            stellarNetwork={runtimeConfig.stellar.network}
+            onChangeStellarNetwork={handleChangeStellarNetwork}
+            walletAddress={walletAddress}
+            walletBalance={walletBalance}
+            rewardsPoints={rewardsPoints}
+            isWalletLoading={isWalletLoading}
+            isWalletBalanceLoading={isWalletBalanceLoading}
+            isRewardsPointsLoading={isRewardsPointsLoading}
+            onConnectWallet={connectWallet}
+            onDisconnectWallet={disconnectWallet}
+            onRefreshPoints={() => loadWalletBalance(walletAddress)}
+          />
+        }
+      />
+      <Route
+        path="/campaign/:id/leaderboard"
+        element={
+          <CampaignLeaderboard
             theme={theme}
             onToggleTheme={toggleTheme}
             stellarNetwork={runtimeConfig.stellar.network}

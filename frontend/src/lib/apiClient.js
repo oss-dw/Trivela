@@ -116,6 +116,34 @@ async function deleteCampaign(id) {
   return request(apiUrl(`/api/v1/campaigns/${id}`), { method: 'DELETE' });
 }
 
+// ── Leaderboard endpoints ─────────────────────────────────────────────────────
+
+/**
+ * @param {string | number} campaignId
+ * @param {{ page?: number, limit?: number, q?: string }} [params]
+ */
+async function getCampaignLeaderboard(campaignId, params = {}) {
+  const qs = new URLSearchParams();
+  if (params.page) qs.set('page', String(params.page));
+  if (params.limit) qs.set('limit', String(params.limit));
+  if (params.q) qs.set('q', params.q);
+  const url =
+    apiUrl(`/api/v1/campaigns/${campaignId}/leaderboard`) +
+    (qs.toString() ? `?${qs}` : '');
+  return /** @type {Promise<{ data: any[], pagination: object }>} */ (request(url));
+}
+
+/**
+ * @param {string | number} campaignId
+ * @param {string} walletAddress
+ */
+async function getParticipantRank(campaignId, walletAddress) {
+  const url =
+    apiUrl(`/api/v1/campaigns/${campaignId}/leaderboard/rank`) +
+    `?wallet=${encodeURIComponent(walletAddress)}`;
+  return request(url);
+}
+
 // ── Config endpoint ───────────────────────────────────────────────────────────
 
 async function getConfig() {
@@ -131,6 +159,8 @@ export const apiClient = {
   createCampaign,
   updateCampaign,
   deleteCampaign,
+  getCampaignLeaderboard,
+  getParticipantRank,
   getConfig,
 };
 

@@ -158,6 +158,9 @@ export default function CampaignDetail({
             <Link to="/" className="back-link">
               Back to campaigns
             </Link>
+            <Link to={`/campaign/${id}/leaderboard`} className="btn btn-secondary detail-leaderboard-btn">
+              View leaderboard
+            </Link>
           </nav>
 
           {isLoading ? (

@@ -18,6 +18,18 @@
 
 .detail-nav {
   margin-bottom: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.detail-leaderboard-btn {
+  font-size: 0.85rem;
+  padding: 0.45rem 1rem;
+  border-radius: 10px;
+  white-space: nowrap;
 }
 
 .back-link {
