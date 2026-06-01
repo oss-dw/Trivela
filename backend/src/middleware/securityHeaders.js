@@ -1,11 +1,3 @@
-/**
- * Security headers middleware.
- *
- * Applies a defence-in-depth header set to every API response.
- * Embed routes (/embed/*) receive a relaxed X-Frame-Options so campaign
- * cards can be iframed by third-party sites.
- */
-
 import helmet from 'helmet';
 
 const SOROBAN_RPC_URLS = process.env.SOROBAN_RPC_URLS || '';
@@ -29,9 +21,9 @@ const helmetMiddleware = helmet({
     },
   },
   hsts: {
-    maxAge: 63072000,
+    maxAge: 15552000,
     includeSubDomains: true,
-    preload: true,
+    preload: false,
   },
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   frameguard: { action: 'deny' },
@@ -52,9 +44,8 @@ const embedHelmetMiddleware = helmet({
     },
   },
   hsts: {
-    maxAge: 63072000,
+    maxAge: 15552000,
     includeSubDomains: true,
-    preload: true,
   },
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   frameguard: false,
