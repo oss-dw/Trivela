@@ -41,6 +41,9 @@ import {
 import { createStorageAdapter } from './storage/index.js';
 import { uploadCampaignImage, validateImageUpload, MAX_IMAGE_SIZE_BYTES } from './services/imageUpload.js';
 import { buildCampaignStats } from './services/campaignStatsService.js';
+import { generateAllowlist } from './lib/allowlist/merkle.js';
+import { parseAllowlistCsv, validateGAddress, MAX_ALLOWLIST_ROWS } from './lib/allowlist/csv.js';
+
 
 const DEFAULT_PORT = 3001;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -201,6 +204,10 @@ export async function createApp(options = {}) {
   const referralRepository = dal.referrals;
   const apiKeyRepository = dal.apiKeys;
   const failedJobRepository = options.failedJobRepository ?? dal.failedJobs;
+  const allowlistRepository = dal.allowlists;
+
+  const requireAdminMasterKey = requireMasterKey;
+
   const storageAdapter = /** @type {import('./storage/storageAdapter.js').StorageAdapter} */ (
     options.storageAdapter ?? createStorageAdapter(process.env)
   );
