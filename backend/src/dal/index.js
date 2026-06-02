@@ -10,6 +10,8 @@ import { assertApiKeyRepository } from './apiKeyRepository.js';
 import { createSqliteApiKeyRepository } from './sqliteApiKeyRepository.js';
 import { createSqliteFailedJobRepository } from './sqliteFailedJobRepository.js';
 import { createPool, isPostgresUrl } from './pg/pgClient.js';
+import { createSqliteAllowlistRepository } from './sqliteAllowlistRepository.js';
+
 import { runPgMigrations } from './pg/migrate.js';
 import { createPgCampaignRepository } from './pg/pgCampaignRepository.js';
 import { createPgAuditLogRepository } from './pg/pgAuditLogRepository.js';
@@ -36,7 +38,9 @@ export async function createDal({
   apiKeyRepository,
   failedJobRepository,
   allowedCategories,
+  allowlistRepository,
 } = {}) {
+
   const db = new Database(dbPath);
   await runMigrations(db);
 
@@ -77,6 +81,7 @@ export async function createDal({
       apiKeyRepository ?? createSqliteApiKeyRepository({ db }),
     ),
     failedJobs: failedJobRepository ?? createSqliteFailedJobRepository({ db }),
+    allowlists: allowlistRepository ?? createSqliteAllowlistRepository({ db }),
     db,
     pgPool,
   };
