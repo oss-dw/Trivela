@@ -14,6 +14,7 @@
 //! - `snapshot`: topics `(snapshot, snapshot_id)`, data `ledger: u32`
 //! - `vested_credit`: topics `(vcredit, user)`, data `(vest_id: u64, total: u64)`
 //! - `vested_claim`: topics `(vclaim, user)`, data `(vest_id: u64, amount: u64)`
+//! - `redeem`: topics `(redeem, user)`, data `(points_burned: u64, asset_amount: i128)`
 
 #![no_std]
 
@@ -36,6 +37,8 @@ pub enum Error {
     RateLimitExceeded = 8,
     VestingNotFound = 9,
     NoPendingAdmin = 10,
+    InsufficientReserve = 11,
+    InvalidRedemptionRate = 12,
 }
 
 /// Vesting schedule record stored per user per vest_id.
@@ -114,6 +117,12 @@ const VEST_CTR: Symbol = symbol_short!("vestctr");
 const VEST_IDS: Symbol = symbol_short!("vestids");
 const VESTED_CREDIT_EVENT: Symbol = symbol_short!("vcredit");
 const VESTED_CLAIM_EVENT: Symbol = symbol_short!("vclaim");
+
+// Redemption constants (issue #450)
+const REDEMPTION_ASSET: Symbol = symbol_short!("red_asst");
+const REDEMPTION_RATE: Symbol = symbol_short!("red_rate");
+const REDEMPTION_RESERVE: Symbol = symbol_short!("red_rsrv");
+const REDEEM_EVENT: Symbol = symbol_short!("redeem");
 
 // ── 2-step admin transfer (issue #281) ───────────────────────────────────────
 // `PENDING_ADMIN` holds an in-flight proposed admin; the new admin must call
@@ -759,6 +768,164 @@ impl RewardsContract {
             }
         }
         total
+    }
+
+    /// Set redemption rate for points-to-asset conversion (admin only).
+    /// rate_bps: how many units of asset per 10,000 points (basis points).
+    /// Example: rate_bps = 100 means 100/10,000 = 0.01 asset per point.
+    pub fn set_redemption_rate(
+        env: Env,
+        admin: Address,
+        nonce: i128,
+        asset: Address,
+        rate_bps: u32,
+    ) -> Result<(), Error> {
+        require_admin_with_nonce(&env, &admin, nonce)?;
+        
+        if rate_bps == 0 {
+            return Err(Error::InvalidRedemptionRate);
+        }
+
+        env.storage().instance().set(&REDEMPTION_ASSET, &asset);
+        env.storage().instance().set(&REDEMPTION_RATE, &rate_bps);
+        env.storage().instance().extend_ttl(50, 100);
+        
+        Ok(())
+    }
+
+    /// Get redemption rate configuration.
+    /// Returns (asset_address, rate_bps) or None if not configured.
+    pub fn redemption_rate(env: Env) -> Option<(Address, u32)> {
+        let asset: Option<Address> = env.storage().instance().get(&REDEMPTION_ASSET);
+        let rate: Option<u32> = env.storage().instance().get(&REDEMPTION_RATE);
+        
+        match (asset, rate) {
+            (Some(a), Some(r)) => Some((a, r)),
+            _ => None,
+        }
+    }
+
+    /// Get current redemption reserve balance.
+    pub fn redemption_reserve(env: Env) -> u64 {
+        env.storage().instance().get(&REDEMPTION_RESERVE).unwrap_or(0)
+    }
+
+    /// Redeem points for asset tokens.
+    /// Burns points_amount from user balance, transfers asset tokens to user.
+    pub fn redeem(env: Env, user: Address, points_amount: u64) -> Result<(), Error> {
+        user.require_auth();
+        ensure_not_paused(&env)?;
+
+        // Get redemption config
+        let asset_address: Address = env
+            .storage()
+            .instance()
+            .get(&REDEMPTION_ASSET)
+            .ok_or(Error::InvalidRedemptionRate)?;
+        
+        let rate_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&REDEMPTION_RATE)
+            .ok_or(Error::InvalidRedemptionRate)?;
+
+        // Calculate asset amount: points_amount * rate_bps / 10_000
+        let asset_amount_u128 = (points_amount as u128)
+            .checked_mul(rate_bps as u128)
+            .ok_or(Error::Overflow)?
+            / BPS_DENOMINATOR;
+        
+        if asset_amount_u128 > i128::MAX as u128 {
+            return Err(Error::Overflow);
+        }
+        let asset_amount = asset_amount_u128 as i128;
+
+        // Check reserve
+        let current_reserve: u64 = env.storage().instance().get(&REDEMPTION_RESERVE).unwrap_or(0);
+        if (asset_amount as u64) > current_reserve {
+            return Err(Error::InsufficientReserve);
+        }
+
+        // Burn points from user balance
+        let balance_key = (BALANCE, user.clone());
+        let current_balance: u64 = env.storage().instance().get(&balance_key).unwrap_or(0);
+        let new_balance = current_balance
+            .checked_sub(points_amount)
+            .ok_or(Error::InsufficientBalance)?;
+        env.storage().instance().set(&balance_key, &new_balance);
+
+        // Update reserve
+        let new_reserve = current_reserve.saturating_sub(asset_amount as u64);
+        env.storage().instance().set(&REDEMPTION_RESERVE, &new_reserve);
+
+        // Transfer asset tokens to user using SAC
+        use soroban_sdk::token;
+        let token_client = token::Client::new(&env, &asset_address);
+        token_client.transfer(&env.current_contract_address(), &user, &asset_amount);
+
+        // Emit redeem event
+        env.events().publish((REDEEM_EVENT, user), (points_amount, asset_amount));
+        env.storage().instance().extend_ttl(50, 100);
+
+        Ok(())
+    }
+
+    /// Withdraw asset tokens from redemption reserve (admin only).
+    /// Used to reclaim unredeemed assets.
+    pub fn withdraw_reserve(
+        env: Env,
+        admin: Address,
+        nonce: i128,
+        amount: u64,
+    ) -> Result<(), Error> {
+        require_admin_with_nonce(&env, &admin, nonce)?;
+
+        let asset_address: Address = env
+            .storage()
+            .instance()
+            .get(&REDEMPTION_ASSET)
+            .ok_or(Error::InvalidRedemptionRate)?;
+
+        let current_reserve: u64 = env.storage().instance().get(&REDEMPTION_RESERVE).unwrap_or(0);
+        if amount > current_reserve {
+            return Err(Error::InsufficientReserve);
+        }
+
+        let new_reserve = current_reserve.saturating_sub(amount);
+        env.storage().instance().set(&REDEMPTION_RESERVE, &new_reserve);
+
+        // Transfer tokens to admin
+        use soroban_sdk::token;
+        let token_client = token::Client::new(&env, &asset_address);
+        token_client.transfer(&env.current_contract_address(), &admin, &(amount as i128));
+
+        env.storage().instance().extend_ttl(50, 100);
+        Ok(())
+    }
+
+    /// Fund redemption reserve (callable by anyone, typically admin).
+    /// Transfers asset tokens from caller to contract reserve.
+    pub fn fund_reserve(env: Env, from: Address, amount: u64) -> Result<(), Error> {
+        from.require_auth();
+
+        let asset_address: Address = env
+            .storage()
+            .instance()
+            .get(&REDEMPTION_ASSET)
+            .ok_or(Error::InvalidRedemptionRate)?;
+
+        // Transfer tokens from caller to contract
+        use soroban_sdk::token;
+        let token_client = token::Client::new(&env, &asset_address);
+        token_client.transfer(&from, &env.current_contract_address(), &(amount as i128));
+
+        // Update reserve
+        let current_reserve: u64 = env.storage().instance().get(&REDEMPTION_RESERVE).unwrap_or(0);
+        let new_reserve = current_reserve.checked_add(amount).ok_or(Error::Overflow)?;
+        env.storage().instance().set(&REDEMPTION_RESERVE, &new_reserve);
+
+        env.storage().instance().extend_ttl(50, 100);
+        Ok(())
     }
 }
 
