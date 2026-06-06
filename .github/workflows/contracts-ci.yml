@@ -74,8 +74,13 @@ jobs:
       - name: Regenerate contract bindings
         run: npm run contracts:build-bindings
 
+      # Scoped to the bindings output only: `cargo test --workspace` above
+      # exercises `Address::generate(&env)`, which makes soroban-sdk rewrite
+      # the tracked `test_snapshots/**/*.json` ledger snapshots with fresh
+      # random addresses on every run. Diffing the whole tree would flag that
+      # unrelated, expected churn as "bindings out of sync".
       - name: Check for unstaged changes (bindings out of sync)
-        run: git diff --exit-code
+        run: git diff --exit-code -- frontend/src/contracts/
 
       # Installing the nightly toolchain switches rustup's default away from
       # stable (and nightly lacks the wasm32-unknown-unknown target), so this
