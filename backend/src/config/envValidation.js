@@ -110,4 +110,3 @@ export function validateBackendEnv(env = process.env) {
     throw new Error(message);
   }
 }
-

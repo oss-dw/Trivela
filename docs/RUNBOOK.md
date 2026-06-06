@@ -15,8 +15,8 @@ Roll back when any of the following occur after switching traffic to green:
 
 ### Automated rollback
 
-The deployment script performs an automatic rollback on failure. No manual
-intervention is needed if the script is still running. The script will:
+The deployment script performs an automatic rollback on failure. No manual intervention is needed if
+the script is still running. The script will:
 
 1. Rewrite the nginx upstream to point back to blue.
 2. Reload nginx (`nginx -s reload`).
@@ -80,9 +80,10 @@ If `/health` returns non-200 or times out:
 1. Check container status: `docker compose ps`
 2. Check logs: `docker compose logs backend --tail 100`
 3. Verify environment variables are set correctly.
-4. Check database connectivity: `docker compose exec backend node -e "import(./src/db.js).then(m => m.default.ping())"`
-5. If the container is in a crash loop, increase `max_retries` or fix the
-   underlying issue before redeploying.
+4. Check database connectivity:
+   `docker compose exec backend node -e "import(./src/db.js).then(m => m.default.ping())"`
+5. If the container is in a crash loop, increase `max_retries` or fix the underlying issue before
+   redeploying.
 
 ## Rate Limit Incidents
 
@@ -92,10 +93,10 @@ If the API returns 429 responses unexpectedly:
    ```bash
    docker compose exec redis redis-cli info stats | grep keyspace
    ```
-2. Adjust `RATE_LIMIT_MAX_REQUESTS` and `RATE_LIMIT_WINDOW_MS` in the
-   environment and restart the backend.
-3. For immediate relief, restart the backend container to flush the in-memory
-   limiter (only effective when Redis is not in use).
+2. Adjust `RATE_LIMIT_MAX_REQUESTS` and `RATE_LIMIT_WINDOW_MS` in the environment and restart the
+   backend.
+3. For immediate relief, restart the backend container to flush the in-memory limiter (only
+   effective when Redis is not in use).
 
 ## Database Migration Failures
 

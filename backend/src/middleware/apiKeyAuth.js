@@ -97,16 +97,16 @@ export default function createApiKeyAuth({
       }
     }
 
-    return res.status(401).json({ error: 'Unauthorized – valid API key required.', code: 'UNAUTHORIZED' });
+    return res
+      .status(401)
+      .json({ error: 'Unauthorized – valid API key required.', code: 'UNAUTHORIZED' });
   };
 }
 
 /**
  * @param {{ masterKey?: string }} [options]
  */
-export function createMasterKeyAuth({
-  masterKey = process.env.TRIVELA_MASTER_KEY || '',
-} = {}) {
+export function createMasterKeyAuth({ masterKey = process.env.TRIVELA_MASTER_KEY || '' } = {}) {
   const normalizedMasterKey = String(masterKey).trim();
 
   return function requireMasterKey(req, res, next) {

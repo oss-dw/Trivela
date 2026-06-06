@@ -13,4 +13,3 @@ export function assertAuditLogRepository(repository) {
 
   return repository;
 }
-

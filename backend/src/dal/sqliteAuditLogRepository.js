@@ -21,9 +21,7 @@ export function createSqliteAuditLogRepository({ db }) {
         'INSERT INTO audit_logs (actor, action, entity, entity_id, diff, created_at) VALUES (?, ?, ?, ?, ?, ?)',
       )
       .run(actor, action, entity, entityId, diffJson, createdAt);
-    return db
-      .prepare('SELECT * FROM audit_logs WHERE id = ?')
-      .get(info.lastInsertRowid);
+    return db.prepare('SELECT * FROM audit_logs WHERE id = ?').get(info.lastInsertRowid);
   }
 
   function list({ entity, entityId, action } = {}) {
@@ -55,4 +53,3 @@ export function createSqliteAuditLogRepository({ db }) {
     list,
   };
 }
-

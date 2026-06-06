@@ -12,7 +12,7 @@ export function createRpcPool(urls, { backoffMs = DEFAULT_BACKOFF_MS } = {}) {
     throw new Error('RPC pool requires at least one URL');
   }
 
-  const endpoints = urls.map(url => ({
+  const endpoints = urls.map((url) => ({
     url,
     healthy: true,
     unhealthySince: /** @type {number|null} */ (null),
@@ -55,7 +55,7 @@ export function createRpcPool(urls, { backoffMs = DEFAULT_BACKOFF_MS } = {}) {
    * @param {string} url
    */
   function markUnhealthy(url) {
-    const ep = endpoints.find(e => e.url === url);
+    const ep = endpoints.find((e) => e.url === url);
     if (ep && ep.healthy) {
       ep.healthy = false;
       ep.unhealthySince = Date.now();
@@ -68,7 +68,7 @@ export function createRpcPool(urls, { backoffMs = DEFAULT_BACKOFF_MS } = {}) {
    * @param {string} url
    */
   function markHealthy(url) {
-    const ep = endpoints.find(e => e.url === url);
+    const ep = endpoints.find((e) => e.url === url);
     if (ep) {
       ep.healthy = true;
       ep.unhealthySince = null;
@@ -83,9 +83,9 @@ export function createRpcPool(urls, { backoffMs = DEFAULT_BACKOFF_MS } = {}) {
   function getStatus() {
     _recoverStale();
     return {
-      healthy: endpoints.filter(ep => ep.healthy).length,
-      unhealthy: endpoints.filter(ep => !ep.healthy).length,
-      urls: endpoints.map(ep => ({ url: ep.url, healthy: ep.healthy })),
+      healthy: endpoints.filter((ep) => ep.healthy).length,
+      unhealthy: endpoints.filter((ep) => !ep.healthy).length,
+      urls: endpoints.map((ep) => ({ url: ep.url, healthy: ep.healthy })),
     };
   }
 
@@ -95,7 +95,7 @@ export function createRpcPool(urls, { backoffMs = DEFAULT_BACKOFF_MS } = {}) {
    * @returns {string[]}
    */
   function getUrls() {
-    return endpoints.map(ep => ep.url);
+    return endpoints.map((ep) => ep.url);
   }
 
   return { getHealthyRpcUrl, markUnhealthy, markHealthy, getStatus, getUrls };

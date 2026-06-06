@@ -38,10 +38,17 @@ jobs:
             ${{ runner.os }}-cargo-docs-
 
       - name: Check for missing documentation on public items
-        run: cargo doc --package trivela-campaign-contract --package trivela-rewards-contract --no-deps --document-private-items 2>&1 | tee cargo-doc-output.txt; if grep -q "warning: missing documentation for" cargo-doc-output.txt; then echo "Missing documentation found!"; grep "warning: missing documentation for" cargo-doc-output.txt; exit 1; fi
+        run: |
+          cargo doc --package trivela-campaign-contract --package trivela-rewards-contract --no-deps --document-private-items 2>&1 | tee cargo-doc-output.txt
+          if grep -q "warning: missing documentation for" cargo-doc-output.txt; then
+            echo "Missing documentation found!"
+            grep "warning: missing documentation for" cargo-doc-output.txt
+            exit 1
+          fi
 
       - name: Generate docs with cargo doc
-        run: cargo doc --package trivela-campaign-contract --package trivela-rewards-contract --no-deps
+        run: |
+          cargo doc --package trivela-campaign-contract --package trivela-rewards-contract --no-deps
 
       - name: Copy docs to docs/contract-api
         run: |

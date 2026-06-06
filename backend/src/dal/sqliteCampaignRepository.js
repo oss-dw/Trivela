@@ -20,7 +20,10 @@ export const DEFAULT_CATEGORIES = ['DeFi', 'NFT', 'Community', 'Airdrop'];
  */
 export function parseCategoriesConfig(raw) {
   if (!raw) return DEFAULT_CATEGORIES;
-  return raw.split(',').map((c) => c.trim()).filter(Boolean);
+  return raw
+    .split(',')
+    .map((c) => c.trim())
+    .filter(Boolean);
 }
 
 /**
@@ -177,7 +180,8 @@ export function createSqliteCampaignRepository({
 
     if (Array.isArray(tags) && tags.length > 0) {
       const tagClauses = tags.map(
-        () => `EXISTS (SELECT 1 FROM json_each(campaigns.tags) WHERE lower(json_each.value) = lower(?))`,
+        () =>
+          `EXISTS (SELECT 1 FROM json_each(campaigns.tags) WHERE lower(json_each.value) = lower(?))`,
       );
       where.push(`(${tagClauses.join(' OR ')})`);
       params.push(...tags);
@@ -196,11 +200,12 @@ export function createSqliteCampaignRepository({
 
     const sortCol = sort && SORTABLE_COLUMNS.has(sort) ? sort : 'id';
     const sortDir = order === 'asc' ? 'ASC' : 'DESC';
-    const orderClause = hasQuery && useFts
-      ? `ORDER BY bm25(campaigns_fts) ASC, campaigns.featured DESC, campaigns.id ASC`
-      : sort
-        ? `ORDER BY campaigns.${sortCol} ${sortDir}`
-        : `ORDER BY campaigns.featured DESC, campaigns.id ASC`;
+    const orderClause =
+      hasQuery && useFts
+        ? `ORDER BY bm25(campaigns_fts) ASC, campaigns.featured DESC, campaigns.id ASC`
+        : sort
+          ? `ORDER BY campaigns.${sortCol} ${sortDir}`
+          : `ORDER BY campaigns.featured DESC, campaigns.id ASC`;
 
     const fromClause = useFts
       ? 'FROM campaigns JOIN campaigns_fts ON campaigns.id = campaigns_fts.rowid'
@@ -208,28 +213,39 @@ export function createSqliteCampaignRepository({
 
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     const sql = `SELECT campaigns.* ${fromClause} ${whereClause} ${orderClause}`;
-    return db.prepare(sql).all(...params).map(rowToCampaign);
+    return db
+      .prepare(sql)
+      .all(...params)
+      .map(rowToCampaign);
   }
 
   function listCategories() {
-    return db.prepare(`
+    return db
+      .prepare(
+        `
       SELECT category AS name, COUNT(*) AS count
       FROM campaigns
       WHERE category IS NOT NULL AND category != '' AND hidden = 0
       GROUP BY category
       ORDER BY count DESC, category ASC
-    `).all();
+    `,
+      )
+      .all();
   }
 
   function listTags(limit = 50) {
-    return db.prepare(`
+    return db
+      .prepare(
+        `
       SELECT lower(json_each.value) AS name, COUNT(*) AS count
       FROM campaigns, json_each(campaigns.tags)
       WHERE campaigns.hidden = 0
       GROUP BY lower(json_each.value)
       ORDER BY count DESC, name ASC
       LIMIT ?
-    `).all(limit);
+    `,
+      )
+      .all(limit);
   }
 
   function getById(id) {
@@ -298,9 +314,20 @@ export function createSqliteCampaignRepository({
 
   function update(id, fields) {
     const allowed = [
-      'name', 'description', 'active', 'rewardPerAction', 'referralBonusPoints',
-      'startDate', 'endDate', 'featured', 'hidden', 'hiddenReason', 'contractId',
-      'imageUrl', 'tags', 'category',
+      'name',
+      'description',
+      'active',
+      'rewardPerAction',
+      'referralBonusPoints',
+      'startDate',
+      'endDate',
+      'featured',
+      'hidden',
+      'hiddenReason',
+      'contractId',
+      'imageUrl',
+      'tags',
+      'category',
     ];
     const columnMap = {
       name: 'name',
@@ -364,11 +391,15 @@ export function createSqliteCampaignRepository({
 
     const clonedName = overrides.name !== undefined ? overrides.name : `Copy of ${source.name}`;
     const clonedSlug = overrides.slug !== undefined ? overrides.slug : generateSlug(clonedName);
-    const clonedDescription = overrides.description !== undefined ? overrides.description : source.description;
-    const clonedRewardPerAction = overrides.rewardPerAction !== undefined ? overrides.rewardPerAction : source.rewardPerAction;
-    const clonedCategory = overrides.category !== undefined ? overrides.category : (source.category || null);
-    const clonedImageUrl = overrides.imageUrl !== undefined ? overrides.imageUrl : (source.imageUrl || null);
-    const clonedTags = overrides.tags !== undefined ? overrides.tags : (source.tags || null);
+    const clonedDescription =
+      overrides.description !== undefined ? overrides.description : source.description;
+    const clonedRewardPerAction =
+      overrides.rewardPerAction !== undefined ? overrides.rewardPerAction : source.rewardPerAction;
+    const clonedCategory =
+      overrides.category !== undefined ? overrides.category : source.category || null;
+    const clonedImageUrl =
+      overrides.imageUrl !== undefined ? overrides.imageUrl : source.imageUrl || null;
+    const clonedTags = overrides.tags !== undefined ? overrides.tags : source.tags || null;
 
     const createdAt = new Date().toISOString();
     const info = db
@@ -387,7 +418,7 @@ export function createSqliteCampaignRepository({
         source.hidden ? 1 : 0,
         source.hiddenReason,
         createdAt,
-        createdAt
+        createdAt,
       );
 
     const newCampaign = getById(info.lastInsertRowid);

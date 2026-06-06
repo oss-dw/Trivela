@@ -34,7 +34,11 @@ export function createEmbedRoute(campaignRepository, siteOrigin) {
   return function embedCampaignCard(req, res) {
     const campaign = campaignRepository.getById(req.params.id);
     if (!campaign) {
-      res.status(404).send('<html><body style="font-family:sans-serif;padding:16px;color:#ef4444">Campaign not found.</body></html>');
+      res
+        .status(404)
+        .send(
+          '<html><body style="font-family:sans-serif;padding:16px;color:#ef4444">Campaign not found.</body></html>',
+        );
       return;
     }
 

@@ -39,6 +39,7 @@ pub enum Error {
     NoPendingAdmin = 10,
     InsufficientReserve = 11,
     InvalidRedemptionRate = 12,
+    InvalidAdminNonce = 13,
 }
 
 /// Vesting schedule record stored per user per vest_id.
@@ -124,6 +125,9 @@ const REDEMPTION_RATE: Symbol = symbol_short!("red_rate");
 const REDEMPTION_RESERVE: Symbol = symbol_short!("red_rsrv");
 const REDEEM_EVENT: Symbol = symbol_short!("redeem");
 
+// Admin nonce — incremented on each admin operation to prevent replay attacks.
+const ADMIN_NONCE: Symbol = symbol_short!("anonce");
+
 // ── 2-step admin transfer (issue #281) ───────────────────────────────────────
 // `PENDING_ADMIN` holds an in-flight proposed admin; the new admin must call
 // `accept_admin()` themselves to complete the rotation, eliminating the
@@ -142,6 +146,23 @@ fn require_admin(env: &Env, admin: &Address) -> Result<(), Error> {
     if &stored_admin != admin {
         return Err(Error::Unauthorized);
     }
+
+    Ok(())
+}
+
+fn require_admin_with_nonce(env: &Env, admin: &Address, nonce: i128) -> Result<(), Error> {
+    admin.require_auth();
+
+    let stored_admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+    if &stored_admin != admin {
+        return Err(Error::Unauthorized);
+    }
+
+    let current: i128 = env.storage().instance().get(&ADMIN_NONCE).unwrap_or(0);
+    if nonce != current {
+        return Err(Error::InvalidAdminNonce);
+    }
+    env.storage().instance().set(&ADMIN_NONCE, &(current + 1));
 
     Ok(())
 }
@@ -224,7 +245,9 @@ impl RewardsContract {
         env.storage()
             .instance()
             .set(&SCHEMA_VERSION, &CURRENT_SCHEMA_VERSION);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(CURRENT_SCHEMA_VERSION)
     }
 
@@ -236,7 +259,9 @@ impl RewardsContract {
             .instance()
             .set(&MAX_CREDIT_PER_CALL, &max_amount);
         env.events().publish((MAX_CREDIT_EVENT,), max_amount);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -265,7 +290,9 @@ impl RewardsContract {
             .set(&(CAMPAIGN_MULTIPLIER, campaign_id), &multiplier_bps);
         env.events()
             .publish((CAMPAIGN_MULTIPLIER_EVENT, campaign_id), multiplier_bps);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -310,7 +337,9 @@ impl RewardsContract {
         let new_balance = current.checked_add(amount).ok_or(Error::Overflow)?;
         env.storage().instance().set(&key, &new_balance);
         env.events().publish((CREDIT_EVENT, user), amount);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(new_balance)
     }
 
@@ -372,7 +401,9 @@ impl RewardsContract {
             env.events().publish((CREDIT_EVENT, user), amount);
         }
 
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -394,7 +425,9 @@ impl RewardsContract {
             .set(&CLAIMED, &total.saturating_add(amount));
 
         env.events().publish((CLAIM_EVENT, user), amount);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(new_balance)
     }
 
@@ -426,7 +459,9 @@ impl RewardsContract {
         env.storage().instance().set(&to_key, &new_to_balance);
 
         env.events().publish((TRANSFER_EVENT, from, to), amount);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -458,7 +493,9 @@ impl RewardsContract {
         env.storage().instance().set(&PENDING_ADMIN, &new_admin);
         env.events()
             .publish((ADMIN_PROPOSED_EVENT, current_admin), new_admin);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -477,9 +514,10 @@ impl RewardsContract {
         }
         env.storage().instance().set(&ADMIN, &new_admin);
         env.storage().instance().remove(&PENDING_ADMIN);
-        env.events()
-            .publish((ADMIN_ACCEPTED_EVENT,), new_admin);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.events().publish((ADMIN_ACCEPTED_EVENT,), new_admin);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -487,7 +525,9 @@ impl RewardsContract {
     pub fn cancel_admin_transfer(env: Env, current_admin: Address) -> Result<(), Error> {
         require_admin(&env, &current_admin)?;
         env.storage().instance().remove(&PENDING_ADMIN);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -496,7 +536,9 @@ impl RewardsContract {
         require_admin(&env, &admin)?;
         env.storage().instance().set(&PAUSED, &paused);
         env.events().publish((PAUSED_EVENT,), paused);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -519,7 +561,9 @@ impl RewardsContract {
 
         env.events()
             .publish((Symbol::new(&env, "set_tiers"), campaign_id), ());
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -531,7 +575,9 @@ impl RewardsContract {
 
         env.events()
             .publish((Symbol::new(&env, "clear_tiers"), campaign_id), ());
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -561,7 +607,9 @@ impl RewardsContract {
         rank: u64,
         campaign_id: u64,
     ) -> Result<u64, Error> {
-        from.require_auth();
+        // `Self::credit` below already calls `from.require_auth()`; calling it
+        // again here would double-authorize the same address in one frame and
+        // trip the host's `Auth(ExistingValue)` guard.
         ensure_not_paused(&env)?;
 
         let points = Self::get_tier_for_rank(env.clone(), rank, campaign_id);
@@ -589,7 +637,9 @@ impl RewardsContract {
         env.storage().instance().set(&RATE_LIM_WIN, &window_ledgers);
         env.events()
             .publish((RATE_LIM_SET_EVENT,), (max_calls, window_ledgers));
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -637,7 +687,9 @@ impl RewardsContract {
 
         env.events()
             .publish((SNAPSHOT_EVENT, snapshot_id), ledger_number);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -696,7 +748,9 @@ impl RewardsContract {
 
         env.events()
             .publish((VESTED_CREDIT_EVENT, user), (vest_id, total_amount));
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(vest_id)
     }
 
@@ -748,7 +802,9 @@ impl RewardsContract {
 
         env.events()
             .publish((VESTED_CLAIM_EVENT, user), (vest_id, amount));
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(available - amount)
     }
 
@@ -781,7 +837,7 @@ impl RewardsContract {
         rate_bps: u32,
     ) -> Result<(), Error> {
         require_admin_with_nonce(&env, &admin, nonce)?;
-        
+
         if rate_bps == 0 {
             return Err(Error::InvalidRedemptionRate);
         }
@@ -789,7 +845,7 @@ impl RewardsContract {
         env.storage().instance().set(&REDEMPTION_ASSET, &asset);
         env.storage().instance().set(&REDEMPTION_RATE, &rate_bps);
         env.storage().instance().extend_ttl(50, 100);
-        
+
         Ok(())
     }
 
@@ -798,7 +854,7 @@ impl RewardsContract {
     pub fn redemption_rate(env: Env) -> Option<(Address, u32)> {
         let asset: Option<Address> = env.storage().instance().get(&REDEMPTION_ASSET);
         let rate: Option<u32> = env.storage().instance().get(&REDEMPTION_RATE);
-        
+
         match (asset, rate) {
             (Some(a), Some(r)) => Some((a, r)),
             _ => None,
@@ -807,7 +863,10 @@ impl RewardsContract {
 
     /// Get current redemption reserve balance.
     pub fn redemption_reserve(env: Env) -> u64 {
-        env.storage().instance().get(&REDEMPTION_RESERVE).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&REDEMPTION_RESERVE)
+            .unwrap_or(0)
     }
 
     /// Redeem points for asset tokens.
@@ -822,7 +881,7 @@ impl RewardsContract {
             .instance()
             .get(&REDEMPTION_ASSET)
             .ok_or(Error::InvalidRedemptionRate)?;
-        
+
         let rate_bps: u32 = env
             .storage()
             .instance()
@@ -834,14 +893,18 @@ impl RewardsContract {
             .checked_mul(rate_bps as u128)
             .ok_or(Error::Overflow)?
             / BPS_DENOMINATOR;
-        
+
         if asset_amount_u128 > i128::MAX as u128 {
             return Err(Error::Overflow);
         }
         let asset_amount = asset_amount_u128 as i128;
 
         // Check reserve
-        let current_reserve: u64 = env.storage().instance().get(&REDEMPTION_RESERVE).unwrap_or(0);
+        let current_reserve: u64 = env
+            .storage()
+            .instance()
+            .get(&REDEMPTION_RESERVE)
+            .unwrap_or(0);
         if (asset_amount as u64) > current_reserve {
             return Err(Error::InsufficientReserve);
         }
@@ -856,7 +919,9 @@ impl RewardsContract {
 
         // Update reserve
         let new_reserve = current_reserve.saturating_sub(asset_amount as u64);
-        env.storage().instance().set(&REDEMPTION_RESERVE, &new_reserve);
+        env.storage()
+            .instance()
+            .set(&REDEMPTION_RESERVE, &new_reserve);
 
         // Transfer asset tokens to user using SAC
         use soroban_sdk::token;
@@ -864,7 +929,8 @@ impl RewardsContract {
         token_client.transfer(&env.current_contract_address(), &user, &asset_amount);
 
         // Emit redeem event
-        env.events().publish((REDEEM_EVENT, user), (points_amount, asset_amount));
+        env.events()
+            .publish((REDEEM_EVENT, user), (points_amount, asset_amount));
         env.storage().instance().extend_ttl(50, 100);
 
         Ok(())
@@ -886,13 +952,19 @@ impl RewardsContract {
             .get(&REDEMPTION_ASSET)
             .ok_or(Error::InvalidRedemptionRate)?;
 
-        let current_reserve: u64 = env.storage().instance().get(&REDEMPTION_RESERVE).unwrap_or(0);
+        let current_reserve: u64 = env
+            .storage()
+            .instance()
+            .get(&REDEMPTION_RESERVE)
+            .unwrap_or(0);
         if amount > current_reserve {
             return Err(Error::InsufficientReserve);
         }
 
         let new_reserve = current_reserve.saturating_sub(amount);
-        env.storage().instance().set(&REDEMPTION_RESERVE, &new_reserve);
+        env.storage()
+            .instance()
+            .set(&REDEMPTION_RESERVE, &new_reserve);
 
         // Transfer tokens to admin
         use soroban_sdk::token;
@@ -917,12 +989,18 @@ impl RewardsContract {
         // Transfer tokens from caller to contract
         use soroban_sdk::token;
         let token_client = token::Client::new(&env, &asset_address);
-        token_client.transfer(&from, &env.current_contract_address(), &(amount as i128));
+        token_client.transfer(&from, env.current_contract_address(), &(amount as i128));
 
         // Update reserve
-        let current_reserve: u64 = env.storage().instance().get(&REDEMPTION_RESERVE).unwrap_or(0);
+        let current_reserve: u64 = env
+            .storage()
+            .instance()
+            .get(&REDEMPTION_RESERVE)
+            .unwrap_or(0);
         let new_reserve = current_reserve.checked_add(amount).ok_or(Error::Overflow)?;
-        env.storage().instance().set(&REDEMPTION_RESERVE, &new_reserve);
+        env.storage()
+            .instance()
+            .set(&REDEMPTION_RESERVE, &new_reserve);
 
         env.storage().instance().extend_ttl(50, 100);
         Ok(())

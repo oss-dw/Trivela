@@ -1,7 +1,10 @@
 import Database from 'better-sqlite3';
 import { runMigrations } from '../db/migrate.js';
 import { assertCampaignRepository } from './campaignRepository.js';
-import { createSqliteCampaignRepository, parseCategoriesConfig } from './sqliteCampaignRepository.js';
+import {
+  createSqliteCampaignRepository,
+  parseCategoriesConfig,
+} from './sqliteCampaignRepository.js';
 import { assertAuditLogRepository } from './auditLogRepository.js';
 import { createSqliteAuditLogRepository } from './sqliteAuditLogRepository.js';
 import { WebhookRepository } from './webhookRepository.js';
@@ -40,7 +43,6 @@ export async function createDal({
   allowedCategories,
   allowlistRepository,
 } = {}) {
-
   const db = new Database(dbPath);
   await runMigrations(db);
 
@@ -62,24 +64,20 @@ export async function createDal({
 
   return {
     campaigns: assertCampaignRepository(
-      campaignRepository
-        ?? pgCampaigns
-        ?? createSqliteCampaignRepository({
+      campaignRepository ??
+        pgCampaigns ??
+        createSqliteCampaignRepository({
           db,
           seed: campaigns,
           allowedCategories: categories,
         }),
     ),
     auditLogs: assertAuditLogRepository(
-      auditLogRepository
-        ?? pgAuditLogs
-        ?? createSqliteAuditLogRepository({ db }),
+      auditLogRepository ?? pgAuditLogs ?? createSqliteAuditLogRepository({ db }),
     ),
     webhooks: webhookRepository ?? new WebhookRepository(db),
     referrals: createSqliteReferralRepository({ db }),
-    apiKeys: assertApiKeyRepository(
-      apiKeyRepository ?? createSqliteApiKeyRepository({ db }),
-    ),
+    apiKeys: assertApiKeyRepository(apiKeyRepository ?? createSqliteApiKeyRepository({ db })),
     failedJobs: failedJobRepository ?? createSqliteFailedJobRepository({ db }),
     allowlists: allowlistRepository ?? createSqliteAllowlistRepository({ db }),
     db,

@@ -21,8 +21,7 @@ export function createEventIndexer({
     snapshot: handleSnapshotEvent,
     vcredit: handleVestedCreditEvent,
     vclaim: handleVestedClaimEvent,
-    referred: (event, database) =>
-      handleReferredEvent(event, database, referralBonus),
+    referred: (event, database) => handleReferredEvent(event, database, referralBonus),
   };
 
   async function processEvent(event) {
@@ -64,23 +63,27 @@ async function handleCreditEvent(event, db) {
      ON CONFLICT(user) DO UPDATE SET balance = balance + ?`,
     [user, amount.toString()],
   );
-  await db.run(
-    `INSERT INTO credit_events (user, amount, ledger, tx_hash) VALUES (?, ?, ?, ?)`,
-    [user, amount.toString(), event.ledger, event.txHash],
-  );
+  await db.run(`INSERT INTO credit_events (user, amount, ledger, tx_hash) VALUES (?, ?, ?, ?)`, [
+    user,
+    amount.toString(),
+    event.ledger,
+    event.txHash,
+  ]);
 }
 
 async function handleClaimEvent(event, db) {
   const user = event.topic?.[1];
   const amount = BigInt(event.data ?? 0);
-  await db.run(
-    `UPDATE balances SET balance = balance - ? WHERE user = ?`,
-    [amount.toString(), user],
-  );
-  await db.run(
-    `INSERT INTO claim_events (user, amount, ledger, tx_hash) VALUES (?, ?, ?, ?)`,
-    [user, amount.toString(), event.ledger, event.txHash],
-  );
+  await db.run(`UPDATE balances SET balance = balance - ? WHERE user = ?`, [
+    amount.toString(),
+    user,
+  ]);
+  await db.run(`INSERT INTO claim_events (user, amount, ledger, tx_hash) VALUES (?, ?, ?, ?)`, [
+    user,
+    amount.toString(),
+    event.ledger,
+    event.txHash,
+  ]);
 }
 
 /**
@@ -129,10 +132,12 @@ async function handleReferredEvent(event, db, referralBonus = 0) {
      ON CONFLICT(user) DO UPDATE SET balance = balance + ?`,
     [referrer, bonus.toString()],
   );
-  await db.run(
-    `INSERT INTO credit_events (user, amount, ledger, tx_hash) VALUES (?, ?, ?, ?)`,
-    [referrer, bonus.toString(), event.ledger, event.txHash],
-  );
+  await db.run(`INSERT INTO credit_events (user, amount, ledger, tx_hash) VALUES (?, ?, ?, ?)`, [
+    referrer,
+    bonus.toString(),
+    event.ledger,
+    event.txHash,
+  ]);
 }
 
 async function handleSnapshotEvent(event, db) {

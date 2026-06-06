@@ -24,19 +24,18 @@ export default function errorHandler(err, _req, res, _next) {
       ? err.statusCode
       : 500;
 
-  const message =
-    err instanceof Error ? err.message : 'An unexpected error occurred';
+  const message = err instanceof Error ? err.message : 'An unexpected error occurred';
 
   // Sanitize error object for logging to prevent log injection
-  const sanitizedErr = err instanceof Error ? {
-    message: sanitizeForLog(err.message),
-    name: sanitizeForLog(err.name),
-  } : sanitizeObject(err);
+  const sanitizedErr =
+    err instanceof Error
+      ? {
+          message: sanitizeForLog(err.message),
+          name: sanitizeForLog(err.name),
+        }
+      : sanitizeObject(err);
 
-  log.error(
-    { err: sanitizedErr, requestId: res.locals.requestId },
-    'Unhandled error'
-  );
+  log.error({ err: sanitizedErr, requestId: res.locals.requestId }, 'Unhandled error');
 
   /** @type {Record<string, unknown>} */
   const body = {

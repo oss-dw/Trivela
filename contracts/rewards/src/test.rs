@@ -295,7 +295,7 @@ fn test_campaign_rewards_integration_flow() {
     //    any further reads.
     let dummy_leaf: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
     let empty_proof: SdkVec<BytesN<32>> = SdkVec::new(&env);
-    assert!(campaign.register(&user, &dummy_leaf, &empty_proof));
+    assert!(campaign.register(&user, &dummy_leaf, &empty_proof, &None));
     assert_eq!(
         env.events().all(),
         vec![
@@ -381,8 +381,8 @@ fn test_campaign_rewards_integration_multi_user() {
     let empty_proof: SdkVec<BytesN<32>> = SdkVec::new(&env);
 
     // Both users register.
-    assert!(campaign.register(&alice, &dummy_leaf, &empty_proof));
-    assert!(campaign.register(&bob, &dummy_leaf, &empty_proof));
+    assert!(campaign.register(&alice, &dummy_leaf, &empty_proof, &None));
+    assert!(campaign.register(&bob, &dummy_leaf, &empty_proof, &None));
     assert_eq!(campaign.get_participant_count(), 2);
 
     // Configure a 1.5x multiplier for campaign 7 and credit Alice through it.
@@ -467,7 +467,7 @@ fn test_campaign_window_gates_rewards_flow() {
     env.ledger().with_mut(|li| li.timestamp = 500);
     assert!(!campaign.is_within_window());
     assert_eq!(
-        campaign.try_register(&user, &dummy_leaf, &empty_proof),
+        campaign.try_register(&user, &dummy_leaf, &empty_proof, &None),
         Err(Ok(CampaignError::OutsideTimeWindow))
     );
     assert!(!campaign.is_participant(&user));
@@ -475,7 +475,7 @@ fn test_campaign_window_gates_rewards_flow() {
     // Inside the window, registration succeeds and the rewards flow runs.
     env.ledger().with_mut(|li| li.timestamp = 1_500);
     assert!(campaign.is_within_window());
-    assert!(campaign.register(&user, &dummy_leaf, &empty_proof));
+    assert!(campaign.register(&user, &dummy_leaf, &empty_proof, &None));
     rewards.credit(&admin, &user, &200);
     rewards.claim(&user, &50);
 
@@ -491,7 +491,7 @@ fn test_campaign_window_gates_rewards_flow() {
     // rejected, even though the campaign is otherwise active.
     let latecomer = Address::generate(&env);
     assert_eq!(
-        campaign.try_register(&latecomer, &dummy_leaf, &empty_proof),
+        campaign.try_register(&latecomer, &dummy_leaf, &empty_proof, &None),
         Err(Ok(CampaignError::OutsideTimeWindow))
     );
     assert_eq!(campaign.get_participant_count(), 1);
@@ -638,23 +638,20 @@ fn test_tiered_rewards_sorting_and_credit() {
     assert_eq!(client.get_tier_for_rank(&21, &1u64), 10);
     assert_eq!(client.get_tier_for_rank(&100, &1u64), 10);
 
-    // Credit user by rank 5 (gets 100 points)
+    // Credit user by rank 5 (gets 100 points).
+    // `env.events().all()` reflects events from the most recent invocation, so
+    // we assert it right after `credit_by_rank` (before any further client
+    // calls, including the `balance` view call). That single invocation emits
+    // the inner `credit` event followed by the `tier_credit` event — the
+    // earlier `set_tiers` event belongs to a prior, separate invocation.
     let balance = client.credit_by_rank(&admin, &user, &5u64, &1u64);
     assert_eq!(balance, 100);
-    assert_eq!(client.balance(&user), 100);
 
-    // Verify events
-    let set_tiers_event = Symbol::new(&env, "set_tiers");
     let tier_credit_event = Symbol::new(&env, "tier_credit");
     assert_eq!(
         env.events().all(),
         vec![
             &env,
-            (
-                contract_id.clone(),
-                vec![&env, set_tiers_event.into_val(&env), 1u64.into_val(&env)],
-                ().into_val(&env)
-            ),
             (
                 contract_id.clone(),
                 vec![
@@ -675,6 +672,8 @@ fn test_tiered_rewards_sorting_and_credit() {
             )
         ]
     );
+
+    assert_eq!(client.balance(&user), 100);
 
     // Credit user by rank 25 (gets 10 points)
     let balance = client.credit_by_rank(&admin, &user, &25u64, &1u64);
