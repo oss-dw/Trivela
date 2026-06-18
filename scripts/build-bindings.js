@@ -19,13 +19,22 @@ const tempRewardsDir = 'frontend/src/contracts/temp_rewards';
 const tempCampaignDir = 'frontend/src/contracts/temp_campaign';
 
 console.log('Building contracts WASM...');
-execSync('cargo build --target wasm32-unknown-unknown --release -p trivela-rewards-contract -p trivela-campaign-contract', { stdio: 'inherit' });
+execSync(
+  'cargo build --target wasm32-unknown-unknown --release -p trivela-rewards-contract -p trivela-campaign-contract',
+  { stdio: 'inherit' },
+);
 
 console.log('Generating rewards bindings...');
-execSync(`stellar contract bindings typescript --wasm ${rewardsWasm} --output-dir ${tempRewardsDir} --overwrite`, { stdio: 'inherit' });
+execSync(
+  `stellar contract bindings typescript --wasm ${rewardsWasm} --output-dir ${tempRewardsDir} --overwrite`,
+  { stdio: 'inherit' },
+);
 
 console.log('Generating campaign bindings...');
-execSync(`stellar contract bindings typescript --wasm ${campaignWasm} --output-dir ${tempCampaignDir} --overwrite`, { stdio: 'inherit' });
+execSync(
+  `stellar contract bindings typescript --wasm ${campaignWasm} --output-dir ${tempCampaignDir} --overwrite`,
+  { stdio: 'inherit' },
+);
 
 function readGeneratedBindings(tempDir) {
   // Modern `stellar contract bindings typescript` consolidates everything
@@ -39,10 +48,18 @@ function readGeneratedBindings(tempDir) {
 }
 
 console.log('Copying rewards bindings...');
-fs.writeFileSync('frontend/src/contracts/rewards.ts', readGeneratedBindings(tempRewardsDir), 'utf8');
+fs.writeFileSync(
+  'frontend/src/contracts/rewards.ts',
+  readGeneratedBindings(tempRewardsDir),
+  'utf8',
+);
 
 console.log('Copying campaign bindings...');
-fs.writeFileSync('frontend/src/contracts/campaign.ts', readGeneratedBindings(tempCampaignDir), 'utf8');
+fs.writeFileSync(
+  'frontend/src/contracts/campaign.ts',
+  readGeneratedBindings(tempCampaignDir),
+  'utf8',
+);
 
 console.log('Cleaning up temporary directories...');
 fs.rmSync(tempRewardsDir, { recursive: true, force: true });

@@ -100,9 +100,7 @@ describe('sqliteAuditLogRepository — integration tests (real SQLite)', () => {
 
     it('filters by actor (via entity filter)', () => {
       const all = auditLogs.list();
-      const admin1Entries = all.filter(
-        (entry) => entry.actor === 'admin-1',
-      );
+      const admin1Entries = all.filter((entry) => entry.actor === 'admin-1');
       assert.equal(admin1Entries.length, 4);
     });
 
