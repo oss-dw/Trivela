@@ -16,7 +16,7 @@
 use super::*;
 use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{Address, Env, symbol_short};
+use soroban_sdk::{symbol_short, Address, Env};
 extern crate alloc;
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
@@ -50,6 +50,7 @@ fn arb_multiplier_bps() -> impl Strategy<Value = u32> {
 }
 
 /// Generate a random ledger sequence
+#[allow(dead_code)]
 fn arb_ledger() -> impl Strategy<Value = u32> {
     1u32..=1_000_000u32
 }
@@ -95,7 +96,7 @@ proptest! {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         let creditor = Address::generate(&env);
-        
+
         client.initialize(&admin, &symbol_short!("TEST"), &symbol_short!("TST"));
         env.mock_all_auths();
 
@@ -161,10 +162,10 @@ proptest! {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         let creditor = Address::generate(&env);
-        
+
         client.initialize(&admin, &symbol_short!("TEST"), &symbol_short!("TST"));
-        client.set_max_credit_per_call(&admin, &limit);
         env.mock_all_auths();
+        client.set_max_credit_per_call(&admin, &limit);
 
         let result = client.try_credit(&creditor, &user, &amount);
 
@@ -193,16 +194,16 @@ proptest! {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         let creditor = Address::generate(&env);
-        
+
         client.initialize(&admin, &symbol_short!("TEST"), &symbol_short!("TST"));
-        client.set_credit_rate_limit(&admin, &max_calls, &window_ledgers);
         env.mock_all_auths();
+        client.set_credit_rate_limit(&admin, &max_calls, &window_ledgers);
 
         let mut successful_calls = 0u32;
 
         for _ in 0..num_attempts {
             let result = client.try_credit(&creditor, &user, &100u64);
-            
+
             if successful_calls < max_calls {
                 // Should succeed until we hit the limit
                 if result.is_ok() {
@@ -235,22 +236,22 @@ proptest! {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         let creditor = Address::generate(&env);
-        
+
         client.initialize(&admin, &symbol_short!("TEST"), &symbol_short!("TST"));
-        client.set_campaign_multiplier(&admin, &campaign_id, &multiplier_bps);
         env.mock_all_auths();
+        client.set_campaign_multiplier(&admin, &campaign_id, &multiplier_bps);
 
         let initial_balance = client.balance(&user);
         let result = client.try_credit_for_campaign(&creditor, &user, &campaign_id, &base_amount);
-        
+
         // Calculate expected amount using the same formula as the contract
         let expected_adjusted = ((base_amount as u128) * (multiplier_bps as u128)) / 10_000u128;
-        
+
         if expected_adjusted <= u64::MAX as u128 {
             if result.is_ok() {
                 let final_balance = client.balance(&user);
                 let actual_credited = final_balance - initial_balance;
-                assert_eq!(actual_credited, expected_adjusted as u64, 
+                assert_eq!(actual_credited, expected_adjusted as u64,
                     "Expected {} credits, got {}", expected_adjusted, actual_credited);
             }
         } else {
@@ -275,13 +276,13 @@ proptest! {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         let creditor = Address::generate(&env);
-        
+
         client.initialize(&admin, &symbol_short!("TEST"), &symbol_short!("TST"));
-        
+
         // First credit some balance while unpaused
         env.mock_all_auths();
         client.credit(&creditor, &user, &1000u64);
-        
+
         // Now pause the contract
         client.set_paused(&admin, &true);
 
@@ -312,22 +313,22 @@ proptest! {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         let from = Address::generate(&env);
-        
+
         client.initialize(&admin, &symbol_short!("TEST"), &symbol_short!("TST"));
         env.mock_all_auths();
 
         let end_ledger = start_ledger.saturating_add(duration);
         let now = start_ledger.saturating_add(time_offset);
-        
+
         // Set current ledger time
         env.ledger().with_mut(|li| li.sequence_number = now);
 
         let vest_result = client.try_credit_vested(&from, &user, &total_amount, &start_ledger, &end_ledger);
-        
+
         // Only test if vesting was successful
         if vest_result.is_ok() {
             let vested_balance = client.vested_balance(&user);
-            
+
             if now <= start_ledger {
                 // Before start: nothing should be unlocked
                 assert_eq!(vested_balance, 0u64);
@@ -361,17 +362,17 @@ proptest! {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         let creditor = Address::generate(&env);
-        
+
         client.initialize(&admin, &symbol_short!("TEST"), &symbol_short!("TST"));
         env.mock_all_auths();
 
         // Try to credit a very large amount first
         let result1 = client.try_credit(&creditor, &user, &amount1);
-        
+
         if result1.is_ok() {
             // If first credit succeeded, try another large credit that should overflow
             let result2 = client.try_credit(&creditor, &user, &amount2);
-            
+
             // If the sum would overflow, it should fail
             if amount1.checked_add(amount2).is_none() {
                 assert_eq!(result2, Err(Ok(Error::Overflow)));
@@ -399,7 +400,7 @@ proptest! {
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
         let creditor = Address::generate(&env);
-        
+
         client.initialize(&admin, &symbol_short!("TEST"), &symbol_short!("TST"));
         env.mock_all_auths();
 
@@ -445,7 +446,13 @@ proptest! {
                 }
                 RewardsOp::CreditForCampaign(campaign_id, base_amount) => {
                     if base_amount > 0 && base_amount <= 1000 { // Avoid overflow
-                        let _ = client.try_credit_for_campaign(&creditor, &user, &campaign_id, &base_amount);
+                        let balance_before = client.balance(&user);
+                        let result = client.try_credit_for_campaign(&creditor, &user, &campaign_id, &base_amount);
+                        if result.is_ok() {
+                            let balance_after = client.balance(&user);
+                            let actual_credited = balance_after - balance_before;
+                            total_expected_credits = total_expected_credits.saturating_add(actual_credited);
+                        }
                     }
                 }
                 RewardsOp::SetRateLimit(max_calls, window) => {
@@ -455,15 +462,15 @@ proptest! {
 
             // Core invariants after each operation
             let balance = client.balance(&user);
-            
+
             // Balance should never exceed what we've credited
-            assert!(balance <= total_expected_credits, 
+            assert!(balance <= total_expected_credits,
                 "Balance {} exceeds total credits {}", balance, total_expected_credits);
-            
+
             // Balance should equal credits minus claims
             let expected_balance = total_expected_credits.saturating_sub(total_expected_claims);
-            assert!(balance <= expected_balance, 
-                "Balance {} inconsistent with credits {} - claims {}", 
+            assert!(balance <= expected_balance,
+                "Balance {} inconsistent with credits {} - claims {}",
                 balance, total_expected_credits, total_expected_claims);
         }
     }

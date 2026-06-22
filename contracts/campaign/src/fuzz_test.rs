@@ -54,6 +54,7 @@ fn arb_window() -> impl Strategy<Value = (u64, u64)> {
 }
 
 /// Generate a sequence of registration operations
+#[allow(dead_code)]
 fn arb_register_sequence() -> impl Strategy<Value = StdVec<bool>> {
     prop::collection::vec(any::<bool>(), 1..=20)
 }
@@ -173,7 +174,7 @@ proptest! {
 
         // Compute test timestamp: if offset pushes us outside [start, end], expect failure
         let test_time = if timestamp_offset < 0 {
-            start.saturating_sub(timestamp_offset.abs() as u64)
+            start.saturating_sub(timestamp_offset.unsigned_abs())
         } else {
             end.saturating_add(timestamp_offset as u64)
         };
@@ -474,8 +475,8 @@ proptest! {
             let count = client.get_participant_count();
             let max_cap = client.get_max_cap();
 
-            // No arithmetic overflow
-            assert!(count <= u64::MAX);
+            // No arithmetic overflow - count is u64, so this is always true, remove check
+            // assert!(count <= u64::MAX);
 
             // Cap enforcement - only applies to new registrations after cap is set
             if max_cap > 0 {

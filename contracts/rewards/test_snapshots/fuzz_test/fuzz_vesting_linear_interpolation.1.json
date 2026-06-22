@@ -23,13 +23,13 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
-                  "u64": "9367"
-                },
-                {
-                  "u32": 16
+                  "u64": "5632"
                 },
                 {
                   "u32": 80
+                },
+                {
+                  "u32": 1074
                 }
               ]
             }
@@ -42,7 +42,7 @@
   ],
   "ledger": {
     "protocol_version": 25,
-    "sequence_number": 655,
+    "sequence_number": 714,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
@@ -149,7 +149,7 @@
                               "symbol": "end_ledger"
                             },
                             "val": {
-                              "u32": 80
+                              "u32": 1074
                             }
                           },
                           {
@@ -157,7 +157,7 @@
                               "symbol": "start_ledger"
                             },
                             "val": {
-                              "u32": 16
+                              "u32": 80
                             }
                           },
                           {
@@ -165,7 +165,7 @@
                               "symbol": "total"
                             },
                             "val": {
-                              "u64": "9367"
+                              "u64": "5632"
                             }
                           }
                         ]
@@ -232,7 +232,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 6312654
+        "live_until": 6312713
       },
       {
         "entry": {

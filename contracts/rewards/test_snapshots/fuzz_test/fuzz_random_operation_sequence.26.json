@@ -7,6 +7,8 @@
   "auth": [
     [],
     [],
+    [],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
@@ -14,7 +16,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "credit_for_campaign",
+              "function_name": "credit",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
@@ -23,10 +25,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
-                  "u64": "1"
-                },
-                {
-                  "u64": "3"
+                  "u64": "4653"
                 }
               ]
             }
@@ -35,6 +34,7 @@
         }
       ]
     ],
+    [],
     []
   ],
   "ledger": {
@@ -129,7 +129,7 @@
                         ]
                       },
                       "val": {
-                        "u64": "3"
+                        "u64": "4653"
                       }
                     }
                   ]
