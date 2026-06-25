@@ -62,6 +62,7 @@ import { createUsageMeteringService } from './services/usageMeteringService.js';
 import { createUsageMeteringMiddleware } from './middleware/usageMetering.js';
 import { requestTimeout } from './middleware/timeout.js';
 import { PoolSaturatedError } from './rpcPool.js';
+import { requireScope } from './middleware/rbac.js';
 
 const DEFAULT_PORT = 3001;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -1379,6 +1380,8 @@ export async function createApp(options = {}) {
     const created = apiKeyRepository.create({
       label: result.data.label ?? '',
       expiresAt: result.data.expiresAt ?? null,
+      orgId: result.data.orgId ?? null,
+      scopes: result.data.scopes ?? undefined,
     });
 
     recordAuditEntry(req, {
@@ -1497,9 +1500,9 @@ export async function createApp(options = {}) {
     app.get(`${prefix}/audit-logs`, rateLimiter, ...guard, listAuditLogs);
     app.get(`${prefix}/indexer/cursor`, rateLimiter, getIndexerCursorState);
     app.post(`${prefix}/indexer/cursor`, rateLimiter, ...guard, setIndexerCursorState);
-    app.post(`${prefix}/campaigns`, rateLimiter, ...guard, createCampaign);
-    app.post(`${prefix}/campaigns/:id/clone`, rateLimiter, ...guard, cloneCampaign);
-    app.post(`${prefix}/campaigns/:id/image`, rateLimiter, ...guard, (req, res, next) => {
+    app.post(`${prefix}/campaigns`, rateLimiter, ...guard, requireScope('campaigns:write'), createCampaign);
+    app.post(`${prefix}/campaigns/:id/clone`, rateLimiter, ...guard, requireScope('campaigns:write'), cloneCampaign);
+    app.post(`${prefix}/campaigns/:id/image`, rateLimiter, ...guard, requireScope('campaigns:write'), (req, res, next) => {
       imageUpload.single('image')(req, res, (err) => {
         if (err?.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json({
@@ -1511,8 +1514,8 @@ export async function createApp(options = {}) {
         return uploadCampaignImageHandler(req, res);
       });
     });
-    app.put(`${prefix}/campaigns/:id`, rateLimiter, ...guard, updateCampaign);
-    app.delete(`${prefix}/campaigns/:id`, rateLimiter, ...guard, deleteCampaign);
+    app.put(`${prefix}/campaigns/:id`, rateLimiter, ...guard, requireScope('campaigns:write'), updateCampaign);
+    app.delete(`${prefix}/campaigns/:id`, rateLimiter, ...guard, requireScope('campaigns:write'), deleteCampaign);
 
     app.post(`${prefix}/admin/api-keys`, rateLimiter, requireMasterKey, createApiKeyHandler);
     app.get(`${prefix}/admin/api-keys`, rateLimiter, requireMasterKey, listApiKeysHandler);
