@@ -17,8 +17,10 @@ import { createSqliteCohortRepository } from './sqliteCohortRepository.js';
 import { createSqlitePushSubscriptionRepository } from './sqlitePushSubscriptionRepository.js';
 import { createPool, isPostgresUrl } from './pg/pgClient.js';
 import { createSqliteAllowlistRepository } from './sqliteAllowlistRepository.js';
+import { SqliteOrganizationRepository } from './sqliteOrganizationRepository.js';
 import { createSqliteOrgMemberRepository } from './sqliteOrgMemberRepository.js';
 import { createSqliteUsageRepository } from './sqliteUsageRepository.js';
+import { createSqliteFeatureFlagRepository } from './sqliteFeatureFlagRepository.js';
 
 import { runPgMigrations } from './pg/migrate.js';
 import { createPgCampaignRepository } from './pg/pgCampaignRepository.js';
@@ -88,8 +90,10 @@ export async function createDal({
     apiKeys: assertApiKeyRepository(apiKeyRepository ?? createSqliteApiKeyRepository({ db })),
     failedJobs: failedJobRepository ?? createSqliteFailedJobRepository({ db }),
     allowlists: allowlistRepository ?? createSqliteAllowlistRepository({ db }),
+    organizations: new SqliteOrganizationRepository(db),
     orgMembers: createSqliteOrgMemberRepository({ db }),
     usage: createSqliteUsageRepository({ db }),
+    featureFlags: createSqliteFeatureFlagRepository({ db }),
     db,
     pgPool,
   };

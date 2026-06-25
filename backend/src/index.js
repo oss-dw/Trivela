@@ -48,6 +48,7 @@ import {
 import { buildCampaignStats } from './services/campaignStatsService.js';
 import { generateAllowlist } from './lib/allowlist/merkle.js';
 import { parseAllowlistCsv, validateGAddress, MAX_ALLOWLIST_ROWS } from './lib/allowlist/csv.js';
+import { initializeWebSocket, getWebSocketServer } from './websocket/index.js';
 import { createEmbedRoute } from './routes/embed.js';
 import { createVariantRoutes } from './routes/variants.js';
 import { createVariantService } from './services/variantService.js';
@@ -58,10 +59,14 @@ import { createOrgRoutes } from './routes/orgs.js';
 import { createAuditRouter } from './routes/audit.js';
 import { createAuditLogService } from './services/auditLogService.js';
 import { createWebPushService } from './services/webPushService.js';
+import { createOrganizationRoutes } from './routes/organizations.js';
 import { createUsageMeteringService } from './services/usageMeteringService.js';
+import { createFeatureFlagRoutes } from './routes/featureFlags.js';
+import { createFeatureFlagService } from './services/featureFlagService.js';
 import { createUsageMeteringMiddleware } from './middleware/usageMetering.js';
 import { requestTimeout } from './middleware/timeout.js';
 import { PoolSaturatedError } from './rpcPool.js';
+import { requireScope } from './middleware/rbac.js';
 
 const DEFAULT_PORT = 3001;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -831,12 +836,14 @@ export async function createApp(options = {}) {
     let status = statusRaw;
 
     if (statusRaw && ['draft', 'archived', 'all'].includes(statusRaw) && !hasApiKey) {
+      // Require API key for non-published statuses
       return res.status(401).json({
         error: 'API key required to access draft, archived, or all campaigns',
         code: 'UNAUTHORIZED',
       });
     }
 
+    // Default to published only for public API
     if (!status && !hasApiKey) {
       status = 'published';
     }
@@ -987,6 +994,16 @@ export async function createApp(options = {}) {
           log.warn({ err, campaignId: campaign.id }, 'Failed to dispatch campaign.created webhook');
         });
 
+      // Notify WebSocket clients about new campaign (Issue #456)
+      const wsServer = getWebSocketServer();
+      if (wsServer) {
+        wsServer.broadcast('campaigns', {
+          type: 'campaign_created',
+          campaign,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
       shortCache.clear();
       return res.status(201).json(campaign);
     } catch (error) {
@@ -1122,6 +1139,16 @@ export async function createApp(options = {}) {
         .catch((err) => {
           log.warn({ err, campaignId: campaign.id }, 'Failed to dispatch campaign.updated webhook');
         });
+    }
+
+    // Notify WebSocket clients about campaign update (Issue #456)
+    const wsServer = getWebSocketServer();
+    if (wsServer) {
+      wsServer.notifyCampaignUpdate(campaign.id, {
+        campaign,
+        changes,
+        before,
+      });
     }
 
     shortCache.clear();
@@ -1492,6 +1519,8 @@ export async function createApp(options = {}) {
     const created = apiKeyRepository.create({
       label: result.data.label ?? '',
       expiresAt: result.data.expiresAt ?? null,
+      orgId: result.data.orgId ?? null,
+      scopes: result.data.scopes ?? undefined,
     });
 
     recordAuditEntry(req, {
@@ -1610,9 +1639,9 @@ export async function createApp(options = {}) {
     app.get(`${prefix}/audit-logs`, rateLimiter, ...guard, listAuditLogs);
     app.get(`${prefix}/indexer/cursor`, rateLimiter, getIndexerCursorState);
     app.post(`${prefix}/indexer/cursor`, rateLimiter, ...guard, setIndexerCursorState);
-    app.post(`${prefix}/campaigns`, rateLimiter, ...guard, createCampaign);
-    app.post(`${prefix}/campaigns/:id/clone`, rateLimiter, ...guard, cloneCampaign);
-    app.post(`${prefix}/campaigns/:id/image`, rateLimiter, ...guard, (req, res, next) => {
+    app.post(`${prefix}/campaigns`, rateLimiter, ...guard, requireScope('campaigns:write'), createCampaign);
+    app.post(`${prefix}/campaigns/:id/clone`, rateLimiter, ...guard, requireScope('campaigns:write'), cloneCampaign);
+    app.post(`${prefix}/campaigns/:id/image`, rateLimiter, ...guard, requireScope('campaigns:write'), (req, res, next) => {
       imageUpload.single('image')(req, res, (err) => {
         if (err?.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json({
@@ -1624,6 +1653,12 @@ export async function createApp(options = {}) {
         return uploadCampaignImageHandler(req, res);
       });
     });
+    app.put(`${prefix}/campaigns/:id`, rateLimiter, ...guard, requireScope('campaigns:write'), updateCampaign);
+    app.delete(`${prefix}/campaigns/:id`, rateLimiter, ...guard, requireScope('campaigns:write'), deleteCampaign);
+    app.put(`${prefix}/campaigns/:id`, rateLimiter, requireApiKey, updateCampaign);
+    app.put(`${prefix}/campaigns/:id/publish`, rateLimiter, requireApiKey, publishCampaign);
+    app.put(`${prefix}/campaigns/:id/archive`, rateLimiter, requireApiKey, archiveCampaign);
+    app.delete(`${prefix}/campaigns/:id`, rateLimiter, requireApiKey, deleteCampaign);
     app.put(`${prefix}/campaigns/:id`, rateLimiter, ...guard, updateCampaign);
     app.put(`${prefix}/campaigns/:id/publish`, rateLimiter, ...guard, publishCampaign);
     app.put(`${prefix}/campaigns/:id/archive`, rateLimiter, ...guard, archiveCampaign);
@@ -1866,7 +1901,17 @@ export async function createApp(options = {}) {
       repository: pushSubscriptionRepository,
       service: webPushService,
     });
+    app.use(prefix, rateLimiter, requireApiKey, pushRouter);
+
+    // Organization and team member invitation routes (Issue #609)
+    const organizationRouter = createOrganizationRoutes(dal);
+    app.use(`${prefix}/organizations`, rateLimiter, requireApiKey, organizationRouter);
     app.use(prefix, rateLimiter, ...guard, pushRouter);
+
+    // Feature flag system routes (Issue #625)
+    const featureFlagService = createFeatureFlagService({ featureFlagRepository: dal.featureFlags });
+    const featureFlagRouter = createFeatureFlagRoutes({ featureFlagService });
+    app.use(`${prefix}/feature-flags`, rateLimiter, featureFlagRouter);
   }
 
   registerApiRoutes(API_V1_PREFIX);
@@ -1917,6 +1962,18 @@ export async function startServer(options = {}) {
   const server = app.listen(port, () => {
     log.info({ port }, 'Trivela API running');
   });
+
+  // Initialize WebSocket server if not disabled
+  if (!options.disableWebSocket && process.env.ENABLE_WEBSOCKET !== 'false') {
+    try {
+      initializeWebSocket(server, {
+        path: process.env.WEBSOCKET_PATH || '/ws',
+      });
+      log.info('WebSocket server initialized on /ws');
+    } catch (error) {
+      log.error({ error }, 'Failed to initialize WebSocket server');
+    }
+  }
 
   // ── Graceful shutdown (issue #650) ─────────────────────────────────────────
   // On SIGTERM / SIGINT:
